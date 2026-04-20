@@ -85,3 +85,17 @@ def validate_transaction_payload(data: dict) -> dict:
         "source_id": source_id,
         "description": description,
     }
+
+
+def validate_user_payload(data: dict) -> dict:
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+    if not username:
+        raise ValueError("Username is required")
+    if len(username) < 3:
+        raise ValueError("Username must be at least 3 characters")
+    if not password:
+        raise ValueError("Password is required")
+    if len(password) < 4:
+        raise ValueError("Password must be at least 4 characters")
+    return {"username": username, "password": password}

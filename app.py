@@ -1,10 +1,12 @@
 import sqlite3
 from flask import Flask, jsonify, request
 from database import get_connection, init_db
+from werkzeug.security import generate_password_hash, check_password_hash
 from models import (
     validate_category_payload,
     validate_source_payload,
     validate_transaction_payload,
+    validate_user_payload,
     gregorian_to_jalali,
 )
 
@@ -20,15 +22,103 @@ def row_to_dict(row):
     return {key: row[key] for key in row.keys()}
 
 
+def get_user_id_from_request():
+    username = request.headers.get("X-Username", "").strip()
+    if not username:
+        username = request.args.get("username", "").strip()
+    if not username:
+        return None, (jsonify({"error": "Username is required"}), 400)
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+    row = cursor.fetchone()
+    conn.close()
+    if row is None:
+        return None, (jsonify({"error": "User not found"}), 404)
+    return row["id"], None
+
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+
+@app.route("/auth/register", methods=["POST"])
+def register():
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        payload = validate_user_payload(data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE username = ?", (payload["username"],))
+    if cursor.fetchone():
+        conn.close()
+        return jsonify({"error": "Username already exists"}), 400
+
+    password_hash = generate_password_hash(payload["password"])
+    cursor.execute(
+        "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+        (payload["username"], password_hash),
+    )
+    conn.commit()
+    new_id = cursor.lastrowid
+    conn.close()
+    return jsonify({"id": new_id, "username": payload["username"]}), 201
+
+
+@app.route("/auth/login", methods=["POST"])
+def login():
+    data = request.get_json(force=True, silent=True) or {}
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+    if not username or not password:
+        return jsonify({"error": "Username and password are required"}), 400
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, username, password_hash FROM users WHERE username = ?",
+        (username,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if row is None or not check_password_hash(row["password_hash"], password):
+        return jsonify({"error": "Invalid username or password"}), 401
+    return jsonify({"id": row["id"], "username": row["username"]})
+
+
+@app.route("/auth/me", methods=["GET"])
+def me():
+    username = request.args.get("username", "").strip()
+    if not username:
+        return jsonify({"error": "Username is required"}), 400
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, username, created_at FROM users WHERE username = ?",
+        (username,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if row is None:
+        return jsonify({"error": "User not found"}), 404
+    return jsonify(row_to_dict(row))
+
+
 # ---------------------------------------------------------------------------
 # Categories
 # ---------------------------------------------------------------------------
 
 @app.route("/categories", methods=["GET"])
 def list_categories():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM categories")
+    cursor.execute("SELECT * FROM categories WHERE user_id = ?", (user_id,))
     rows = cursor.fetchall()
     conn.close()
     return jsonify([row_to_dict(r) for r in rows])
@@ -36,6 +126,9 @@ def list_categories():
 
 @app.route("/categories", methods=["POST"])
 def create_category():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     data = request.get_json(force=True, silent=True) or {}
     try:
         payload = validate_category_payload(data)
@@ -46,8 +139,8 @@ def create_category():
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "INSERT INTO categories (name, type) VALUES (?, ?)",
-            (payload["name"], payload["type"]),
+            "INSERT INTO categories (user_id, name, type) VALUES (?, ?, ?)",
+            (user_id, payload["name"], payload["type"]),
         )
         conn.commit()
         new_id = cursor.lastrowid
@@ -60,9 +153,14 @@ def create_category():
 
 @app.route("/categories/<int:cat_id>", methods=["GET"])
 def get_category(cat_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM categories WHERE id = ?", (cat_id,))
+    cursor.execute(
+        "SELECT * FROM categories WHERE id = ? AND user_id = ?", (cat_id, user_id)
+    )
     row = cursor.fetchone()
     conn.close()
     if row is None:
@@ -72,6 +170,9 @@ def get_category(cat_id):
 
 @app.route("/categories/<int:cat_id>", methods=["PUT"])
 def update_category(cat_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     data = request.get_json(force=True, silent=True) or {}
     try:
         payload = validate_category_payload(data)
@@ -80,14 +181,16 @@ def update_category(cat_id):
 
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM categories WHERE id = ?", (cat_id,))
+    cursor.execute(
+        "SELECT id FROM categories WHERE id = ? AND user_id = ?", (cat_id, user_id)
+    )
     if cursor.fetchone() is None:
         conn.close()
         return jsonify({"error": "Category not found"}), 404
     try:
         cursor.execute(
-            "UPDATE categories SET name = ?, type = ? WHERE id = ?",
-            (payload["name"], payload["type"], cat_id),
+            "UPDATE categories SET name = ?, type = ? WHERE id = ? AND user_id = ?",
+            (payload["name"], payload["type"], cat_id, user_id),
         )
         conn.commit()
     except sqlite3.IntegrityError as exc:
@@ -99,9 +202,14 @@ def update_category(cat_id):
 
 @app.route("/categories/<int:cat_id>", methods=["DELETE"])
 def delete_category(cat_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM categories WHERE id = ?", (cat_id,))
+    cursor.execute(
+        "SELECT id FROM categories WHERE id = ? AND user_id = ?", (cat_id, user_id)
+    )
     if cursor.fetchone() is None:
         conn.close()
         return jsonify({"error": "Category not found"}), 404
@@ -117,9 +225,12 @@ def delete_category(cat_id):
 
 @app.route("/sources", methods=["GET"])
 def list_sources():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM sources")
+    cursor.execute("SELECT * FROM sources WHERE user_id = ?", (user_id,))
     rows = cursor.fetchall()
     conn.close()
     return jsonify([row_to_dict(r) for r in rows])
@@ -127,6 +238,9 @@ def list_sources():
 
 @app.route("/sources", methods=["POST"])
 def create_source():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     data = request.get_json(force=True, silent=True) or {}
     try:
         payload = validate_source_payload(data)
@@ -139,9 +253,9 @@ def create_source():
     try:
         cursor.execute(
             """
-            INSERT INTO sources (name, amount) VALUES (?, ?)
+            INSERT INTO sources (user_id, name, amount) VALUES (?, ?, ?)
             """,
-            (payload["name"], payload["amount"]),
+            (user_id, payload["name"], payload["amount"]),
         )
         conn.commit()
         new_id = cursor.lastrowid
@@ -154,9 +268,14 @@ def create_source():
 
 @app.route("/sources/<int:source_id>", methods=["GET"])
 def get_source(source_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM sources WHERE id = ?", (source_id,))
+    cursor.execute(
+        "SELECT * FROM sources WHERE id = ? AND user_id = ?", (source_id, user_id)
+    )
     row = cursor.fetchone()
     conn.close()
     if row is None:
@@ -166,6 +285,9 @@ def get_source(source_id):
 
 @app.route("/sources/<int:source_id>", methods=["PUT"])
 def update_source(source_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     data = request.get_json(force=True, silent=True) or {}
     try:
         payload = validate_source_payload(data)
@@ -174,14 +296,16 @@ def update_source(source_id):
 
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM sources WHERE id = ?", (source_id,))
+    cursor.execute(
+        "SELECT id FROM sources WHERE id = ? AND user_id = ?", (source_id, user_id)
+    )
     if cursor.fetchone() is None:
         conn.close()
         return jsonify({"error": "Source not found"}), 404
     try:
         cursor.execute(
-            "UPDATE sources SET name = ? WHERE id = ?",
-            (payload["name"], source_id),
+            "UPDATE sources SET name = ? WHERE id = ? AND user_id = ?",
+            (payload["name"], source_id, user_id),
         )
         conn.commit()
     except sqlite3.IntegrityError as exc:
@@ -193,9 +317,14 @@ def update_source(source_id):
 
 @app.route("/sources/<int:source_id>", methods=["DELETE"])
 def delete_source(source_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM sources WHERE id = ?", (source_id,))
+    cursor.execute(
+        "SELECT id FROM sources WHERE id = ? AND user_id = ?", (source_id, user_id)
+    )
     if cursor.fetchone() is None:
         conn.close()
         return jsonify({"error": "Source not found"}), 404
@@ -211,6 +340,9 @@ def delete_source(source_id):
 
 @app.route("/transactions", methods=["GET"])
 def list_transactions():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     category_id = request.args.get("category_id", type=int)
     source_id = request.args.get("source_id", type=int)
     conn = get_connection()
@@ -220,9 +352,9 @@ def list_transactions():
         "FROM transactions t "
         "LEFT JOIN categories c ON t.category_id = c.id "
         "LEFT JOIN sources s ON t.source_id = s.id "
-        "WHERE 1=1"
+        "WHERE t.user_id = ?"
     )
-    params = []
+    params = [user_id]
     if category_id is not None:
         query += " AND t.category_id = ?"
         params.append(category_id)
@@ -244,6 +376,9 @@ def list_transactions():
 
 @app.route("/transactions", methods=["POST"])
 def create_transaction():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     data = request.get_json(force=True, silent=True) or {}
     try:
         payload = validate_transaction_payload(data)
@@ -254,10 +389,11 @@ def create_transaction():
     cursor = conn.cursor()
     cursor.execute(
         """
-        INSERT INTO transactions (date, amount, category_id, source_id, description)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO transactions (user_id, date, amount, category_id, source_id, description)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
         (
+            user_id,
             payload["date"],
             payload["amount"],
             payload["category_id"],
@@ -283,6 +419,9 @@ def create_transaction():
 
 @app.route("/transactions/<int:tx_id>", methods=["GET"])
 def get_transaction(tx_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -290,8 +429,8 @@ def get_transaction(tx_id):
         "FROM transactions t "
         "LEFT JOIN categories c ON t.category_id = c.id "
         "LEFT JOIN sources s ON t.source_id = s.id "
-        "WHERE t.id = ?",
-        (tx_id,),
+        "WHERE t.id = ? AND t.user_id = ?",
+        (tx_id, user_id),
     )
     row = cursor.fetchone()
     conn.close()
@@ -304,6 +443,9 @@ def get_transaction(tx_id):
 
 @app.route("/transactions/<int:tx_id>", methods=["PUT"])
 def update_transaction(tx_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     data = request.get_json(force=True, silent=True) or {}
     try:
         payload = validate_transaction_payload(data)
@@ -312,7 +454,9 @@ def update_transaction(tx_id):
 
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM transactions WHERE id = ?", (tx_id,))
+    cursor.execute(
+        "SELECT id FROM transactions WHERE id = ? AND user_id = ?", (tx_id, user_id)
+    )
     if cursor.fetchone() is None:
         conn.close()
         return jsonify({"error": "Transaction not found"}), 404
@@ -320,7 +464,7 @@ def update_transaction(tx_id):
         """
         UPDATE transactions
         SET date = ?, amount = ?, category_id = ?, source_id = ?, description = ?
-        WHERE id = ?
+        WHERE id = ? AND user_id = ?
         """,
         (
             payload["date"],
@@ -329,6 +473,7 @@ def update_transaction(tx_id):
             payload.get("source_id"),
             payload["description"],
             tx_id,
+            user_id,
         ),
     )
     conn.commit()
@@ -340,9 +485,14 @@ def update_transaction(tx_id):
 
 @app.route("/transactions/<int:tx_id>", methods=["DELETE"])
 def delete_transaction(tx_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM transactions WHERE id = ?", (tx_id,))
+    cursor.execute(
+        "SELECT id FROM transactions WHERE id = ? AND user_id = ?", (tx_id, user_id)
+    )
     if cursor.fetchone() is None:
         conn.close()
         return jsonify({"error": "Transaction not found"}), 404
@@ -354,6 +504,9 @@ def delete_transaction(tx_id):
 
 @app.route("/transactions/summary", methods=["GET"])
 def transactions_summary():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -363,7 +516,9 @@ def transactions_summary():
             COALESCE(SUM(CASE WHEN c.type = 'cost' THEN t.amount ELSE 0 END), 0) AS total_cost
         FROM transactions t
         LEFT JOIN categories c ON t.category_id = c.id
-        """
+        WHERE t.user_id = ?
+        """,
+        (user_id,),
     )
     row = cursor.fetchone()
     conn.close()
@@ -380,6 +535,9 @@ def transactions_summary():
 
 @app.route("/transactions/report/category", methods=["GET"])
 def report_by_category():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -390,9 +548,11 @@ def report_by_category():
             COALESCE(SUM(t.amount), 0) AS total
         FROM categories c
         LEFT JOIN transactions t ON c.id = t.category_id
+        WHERE c.user_id = ?
         GROUP BY c.id
         ORDER BY total DESC
-        """
+        """,
+        (user_id,),
     )
     rows = cursor.fetchall()
     conn.close()
@@ -401,6 +561,9 @@ def report_by_category():
 
 @app.route("/transactions/report/monthly", methods=["GET"])
 def report_by_month():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -411,9 +574,11 @@ def report_by_month():
             COALESCE(SUM(CASE WHEN c.type = 'cost' THEN t.amount ELSE 0 END), 0) AS total_cost
         FROM transactions t
         LEFT JOIN categories c ON t.category_id = c.id
+        WHERE t.user_id = ?
         GROUP BY month
         ORDER BY month
-        """
+        """,
+        (user_id,),
     )
     rows = cursor.fetchall()
     conn.close()
@@ -422,6 +587,9 @@ def report_by_month():
 
 @app.route("/transactions/report/category-chart", methods=["GET"])
 def report_category_chart():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -432,10 +600,12 @@ def report_category_chart():
             COALESCE(SUM(t.amount), 0) AS total
         FROM categories c
         LEFT JOIN transactions t ON c.id = t.category_id
+        WHERE c.user_id = ?
         GROUP BY c.id
         HAVING total > 0
         ORDER BY total DESC
-        """
+        """,
+        (user_id,),
     )
     rows = cursor.fetchall()
     conn.close()
@@ -444,9 +614,14 @@ def report_category_chart():
 
 @app.route("/sources/<int:source_id>/balance", methods=["GET"])
 def source_balance(source_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM sources WHERE id = ?", (source_id,))
+    cursor.execute(
+        "SELECT id FROM sources WHERE id = ? AND user_id = ?", (source_id, user_id)
+    )
     if cursor.fetchone() is None:
         conn.close()
         return jsonify({"error": "Source not found"}), 404
@@ -457,9 +632,9 @@ def source_balance(source_id):
             COALESCE(SUM(CASE WHEN c.type = 'cost' THEN t.amount ELSE 0 END), 0) AS total_cost
         FROM transactions t
         LEFT JOIN categories c ON t.category_id = c.id
-        WHERE t.source_id = ?
+        WHERE t.source_id = ? AND t.user_id = ?
         """,
-        (source_id,),
+        (source_id, user_id),
     )
     row = cursor.fetchone()
     conn.close()

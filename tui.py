@@ -1,10 +1,13 @@
 import math
 import sys
+from datetime import datetime
 
+import jdatetime
 import requests
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
+from textual.reactive import reactive
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
@@ -25,30 +28,42 @@ BASE_URL = "http://127.0.0.1:5000"
 # API helpers
 # ---------------------------------------------------------------------------
 
-def api_get(path, params=None):
+def api_get(path, params=None, username=None):
+    headers = {}
+    if username:
+        headers["X-Username"] = username
     try:
-        return requests.get(f"{BASE_URL}{path}", params=params, timeout=10)
+        return requests.get(f"{BASE_URL}{path}", params=params, headers=headers, timeout=10)
     except requests.RequestException:
         return None
 
 
-def api_post(path, payload):
+def api_post(path, payload, username=None):
+    headers = {}
+    if username:
+        headers["X-Username"] = username
     try:
-        return requests.post(f"{BASE_URL}{path}", json=payload, timeout=10)
+        return requests.post(f"{BASE_URL}{path}", json=payload, headers=headers, timeout=10)
     except requests.RequestException:
         return None
 
 
-def api_put(path, payload):
+def api_put(path, payload, username=None):
+    headers = {}
+    if username:
+        headers["X-Username"] = username
     try:
-        return requests.put(f"{BASE_URL}{path}", json=payload, timeout=10)
+        return requests.put(f"{BASE_URL}{path}", json=payload, headers=headers, timeout=10)
     except requests.RequestException:
         return None
 
 
-def api_delete(path):
+def api_delete(path, username=None):
+    headers = {}
+    if username:
+        headers["X-Username"] = username
     try:
-        return requests.delete(f"{BASE_URL}{path}", timeout=10)
+        return requests.delete(f"{BASE_URL}{path}", headers=headers, timeout=10)
     except requests.RequestException:
         return None
 
@@ -73,8 +88,26 @@ def handle_response(resp):
 # ---------------------------------------------------------------------------
 
 class StatusBar(Static):
+    status_text = reactive("Ready")
+
     def __init__(self, text="Ready", **kwargs):
         super().__init__(text, **kwargs)
+        self.status_text = text
+
+    def on_mount(self):
+        self.set_interval(1, self.update_status)
+        self.update_status()
+
+    def watch_status_text(self, text: str):
+        self.update(text)
+
+    def update_status(self):
+        user = getattr(self.app, "user", None)
+        username = user.get("username", "Guest") if user else "Guest"
+        now = datetime.now()
+        jalali_now = jdatetime.datetime.fromgregorian(datetime=now)
+        shamsi_str = jalali_now.strftime("%Y-%m-%d %H:%M:%S")
+        self.status_text = f"User: {username}  |  {shamsi_str}"
 
 
 class HelpTip(Static):
@@ -130,6 +163,72 @@ class ConfirmBox(ModalScreen[bool]):
 
 
 # ---------------------------------------------------------------------------
+# Login
+# ---------------------------------------------------------------------------
+
+class LoginScreen(Screen):
+    BINDINGS = [
+        Binding("escape", "quit", "Exit"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Container(classes="main_panel"):
+            yield Label("TERMINAL ACCOUNTING SYSTEM", classes="main_title")
+            yield Static("=" * 50, classes="separator")
+            yield Label("LOGIN", classes="menu_header")
+            yield Static("-" * 50, classes="separator")
+            yield Label("Username:")
+            yield Input(placeholder="Username", id="login_user")
+            yield Label("Password:")
+            yield Input(placeholder="Password", password=True, id="login_pass")
+            yield Static("")
+            with Horizontal(classes="button_row"):
+                yield Button("Login", variant="primary", id="login_btn")
+                yield Button("Register", variant="default", id="register_btn")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Tab] Next field  [Enter] Login  [Esc] Exit", id="help")
+            yield StatusBar("Enter=Login  Esc=Quit", id="status")
+        yield Footer()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "login_btn":
+            self.do_login()
+        elif event.button.id == "register_btn":
+            self.do_register()
+
+    def do_login(self):
+        username = self.query_one("#login_user", Input).value.strip()
+        password = self.query_one("#login_pass", Input).value
+        if not username or not password:
+            self.app.push_screen(MessageBox("Username and password are required.", "Validation"))
+            return
+        resp = api_post("/auth/login", {"username": username, "password": password}, username=username)
+        data, err = handle_response(resp)
+        if err:
+            self.app.push_screen(MessageBox(err, "Error"))
+        else:
+            self.app.user = data
+            self.app.push_screen(MainMenuScreen())
+
+    def do_register(self):
+        username = self.query_one("#login_user", Input).value.strip()
+        password = self.query_one("#login_pass", Input).value
+        if not username or not password:
+            self.app.push_screen(MessageBox("Username and password are required.", "Validation"))
+            return
+        resp = api_post("/auth/register", {"username": username, "password": password}, username=username)
+        data, err = handle_response(resp)
+        if err:
+            self.app.push_screen(MessageBox(err, "Error"))
+        else:
+            self.app.push_screen(MessageBox("Registration successful. Please log in.", "Success"))
+
+    def action_quit(self):
+        self.app.action_quit()
+
+
+# ---------------------------------------------------------------------------
 # Main menu
 # ---------------------------------------------------------------------------
 
@@ -140,6 +239,7 @@ class MainMenuScreen(Screen):
         Binding("2", "go_sources", "Sources"),
         Binding("3", "go_transactions", "Transactions"),
         Binding("4", "go_reports", "Reports"),
+        Binding("l", "logout", "Logout"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -147,18 +247,27 @@ class MainMenuScreen(Screen):
         with Container(classes="main_panel"):
             yield Label("TERMINAL ACCOUNTING SYSTEM", classes="main_title")
             yield Static("=" * 50, classes="separator")
-            yield Label("Main Menu", classes="menu_header")
+            user = getattr(self.app, "user", None)
+            if user:
+                yield Label(f"Welcome, {user.get('username', '')}!", classes="menu_header")
+            else:
+                yield Label("Main Menu", classes="menu_header")
             yield Static("-" * 50, classes="separator")
             yield ListView(
                 ListItem(Label("1. Categories")),
                 ListItem(Label("2. Sources")),
                 ListItem(Label("3. Transactions")),
                 ListItem(Label("4. Reports")),
-                ListItem(Label("5. Exit")),
+                ListItem(Label("5. Logout")),
+                ListItem(Label("6. Exit")),
                 id="main_menu_list",
             )
-        yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-4] Quick select  [Q] Exit", id="help")
-        yield StatusBar("Enter=Select  Esc=Back  Q=Quit", id="status")
+        with Vertical(classes="bottom_bar"):
+            now = datetime.now()
+            jalali_now = jdatetime.datetime.fromgregorian(datetime=now)
+            shamsi_str = jalali_now.strftime("%Y-%m-%d")
+            yield HelpTip(f"[{shamsi_str}]  [↑/↓] Navigate  [Enter] Select  [1-4] Quick select  [L] Logout  [Q] Exit", id="help")
+            yield StatusBar("Enter=Select  Esc=Back  L=Logout  Q=Quit", id="status")
         yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
@@ -172,7 +281,9 @@ class MainMenuScreen(Screen):
         elif idx == 3:
             self.app.push_screen(ReportsScreen())
         elif idx == 4:
-            self.app.exit()
+            self.action_logout()
+        elif idx == 5:
+            self.app.action_quit()
 
     def action_go_categories(self):
         self.app.push_screen(CategoriesScreen())
@@ -185,6 +296,12 @@ class MainMenuScreen(Screen):
 
     def action_go_reports(self):
         self.app.push_screen(ReportsScreen())
+
+    def action_logout(self):
+        self.app.user = None
+        while len(self.app.screen_stack) > 1:
+            self.app.pop_screen()
+        self.app.push_screen(LoginScreen())
 
 
 # ---------------------------------------------------------------------------
@@ -209,8 +326,9 @@ class CategoriesScreen(Screen):
                 ListItem(Label("3. Back to Main Menu")),
                 id="cat_menu_list",
             )
-        yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-2] Quick select  [Esc] Back", id="help")
-        yield StatusBar("Enter=Select  Esc=Back", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-2] Quick select  [Esc] Back", id="help")
+            yield StatusBar("Enter=Select  Esc=Back", id="status")
         yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
@@ -251,8 +369,9 @@ class CategoryListScreen(Screen):
                     yield Label("DETAILS", classes="detail_header")
                     yield Static("-" * 25, classes="separator")
                     yield Static(id="cat_detail")
-        yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [Esc] Back", id="help")
-        yield StatusBar("E=Edit  D=Delete  Esc=Back", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [Esc] Back", id="help")
+            yield StatusBar("E=Edit  D=Delete  Esc=Back", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -264,7 +383,7 @@ class CategoryListScreen(Screen):
     def load_data(self):
         table = self.query_one("#cat_table", DataTable)
         table.clear()
-        resp = api_get("/categories")
+        resp = api_get("/categories", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -340,7 +459,7 @@ class CategoryListScreen(Screen):
         def on_confirm(confirmed: bool):
             if not confirmed:
                 return
-            resp = api_delete(f"/categories/{cat_id}")
+            resp = api_delete(f"/categories/{cat_id}", username=self.app.user.get("username"))
             _, err = handle_response(resp)
             if err:
                 self.app.push_screen(MessageBox(err, "Error"))
@@ -370,8 +489,9 @@ class CategoryAddScreen(Screen):
             with Horizontal(classes="button_row"):
                 yield Button("Save", variant="primary", id="save")
                 yield Button("Cancel", variant="default", id="cancel")
-        yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
-        yield StatusBar("Enter=Save  Esc=Cancel", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
+            yield StatusBar("Enter=Save  Esc=Cancel", id="status")
         yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -392,7 +512,7 @@ class CategoryAddScreen(Screen):
         if cat_type is None or cat_type == Select.BLANK:
             self.app.push_screen(MessageBox("Type is required", "Validation"))
             return
-        resp = api_post("/categories", {"name": name, "type": str(cat_type)})
+        resp = api_post("/categories", {"name": name, "type": str(cat_type)}, username=self.app.user.get("username"))
         _, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -426,12 +546,13 @@ class CategoryEditScreen(Screen):
             with Horizontal(classes="button_row"):
                 yield Button("Save", variant="primary", id="save")
                 yield Button("Cancel", variant="default", id="cancel")
-        yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
-        yield StatusBar("Enter=Save  Esc=Cancel", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
+            yield StatusBar("Enter=Save  Esc=Cancel", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
-        resp = api_get(f"/categories/{self.cat_id}")
+        resp = api_get(f"/categories/{self.cat_id}", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -457,7 +578,7 @@ class CategoryEditScreen(Screen):
         if cat_type is None or cat_type == Select.BLANK:
             self.app.push_screen(MessageBox("Type is required", "Validation"))
             return
-        resp = api_put(f"/categories/{self.cat_id}", {"name": name, "type": str(cat_type)})
+        resp = api_put(f"/categories/{self.cat_id}", {"name": name, "type": str(cat_type)}, username=self.app.user.get("username"))
         _, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -489,8 +610,9 @@ class SourcesScreen(Screen):
                 ListItem(Label("3. Back to Main Menu")),
                 id="src_menu_list",
             )
-        yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-2] Quick select  [Esc] Back", id="help")
-        yield StatusBar("Enter=Select  Esc=Back", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-2] Quick select  [Esc] Back", id="help")
+            yield StatusBar("Enter=Select  Esc=Back", id="status")
         yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
@@ -531,8 +653,9 @@ class SourceListScreen(Screen):
                     yield Label("DETAILS", classes="detail_header")
                     yield Static("-" * 25, classes="separator")
                     yield Static(id="src_detail")
-        yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [Esc] Back", id="help")
-        yield StatusBar("E=Edit  D=Delete  Esc=Back", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [Esc] Back", id="help")
+            yield StatusBar("E=Edit  D=Delete  Esc=Back", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -544,7 +667,7 @@ class SourceListScreen(Screen):
     def load_data(self):
         table = self.query_one("#src_table", DataTable)
         table.clear()
-        resp = api_get("/sources")
+        resp = api_get("/sources", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -571,7 +694,7 @@ class SourceListScreen(Screen):
             detail.update("Select a source to see details.")
             return
         # Fetch balance
-        bal_resp = api_get(f"/sources/{src_id}/balance")
+        bal_resp = api_get(f"/sources/{src_id}/balance", username=self.app.user.get("username"))
         bal_data, bal_err = handle_response(bal_resp)
         if bal_err or bal_data is None:
             bal_info = "Balance: N/A"
@@ -628,7 +751,7 @@ class SourceListScreen(Screen):
         def on_confirm(confirmed: bool):
             if not confirmed:
                 return
-            resp = api_delete(f"/sources/{src_id}")
+            resp = api_delete(f"/sources/{src_id}", username=self.app.user.get("username"))
             _, err = handle_response(resp)
             if err:
                 self.app.push_screen(MessageBox(err, "Error"))
@@ -654,8 +777,9 @@ class SourceAddScreen(Screen):
             with Horizontal(classes="button_row"):
                 yield Button("Save", variant="primary", id="save")
                 yield Button("Cancel", variant="default", id="cancel")
-        yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
-        yield StatusBar("Enter=Save  Esc=Cancel", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
+            yield StatusBar("Enter=Save  Esc=Cancel", id="status")
         yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -685,7 +809,7 @@ class SourceAddScreen(Screen):
             "name": name,
             "amount": amount,
         }
-        resp = api_post("/sources", payload)
+        resp = api_post("/sources", payload, username=self.app.user.get("username"))
         _, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -714,12 +838,13 @@ class SourceEditScreen(Screen):
             with Horizontal(classes="button_row"):
                 yield Button("Save", variant="primary", id="save")
                 yield Button("Cancel", variant="default", id="cancel")
-        yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
-        yield StatusBar("Enter=Save  Esc=Cancel", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
+            yield StatusBar("Enter=Save  Esc=Cancel", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
-        resp = api_get(f"/sources/{self.src_id}")
+        resp = api_get(f"/sources/{self.src_id}", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -741,7 +866,7 @@ class SourceEditScreen(Screen):
         if not name:
             self.app.push_screen(MessageBox("Name is required", "Validation"))
             return
-        resp = api_put(f"/sources/{self.src_id}", {"name": name})
+        resp = api_put(f"/sources/{self.src_id}", {"name": name}, username=self.app.user.get("username"))
         _, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -775,8 +900,9 @@ class TransactionsScreen(Screen):
                 ListItem(Label("4. Back to Main Menu")),
                 id="tx_menu_list",
             )
-        yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-3] Quick select  [Esc] Back", id="help")
-        yield StatusBar("Enter=Select  Esc=Back", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-3] Quick select  [Esc] Back", id="help")
+            yield StatusBar("Enter=Select  Esc=Back", id="status")
         yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
@@ -822,8 +948,9 @@ class TransactionListScreen(Screen):
                     yield Label("DETAILS", classes="detail_header")
                     yield Static("-" * 25, classes="separator")
                     yield Static(id="tx_detail")
-        yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [Esc] Back", id="help")
-        yield StatusBar("E=Edit  D=Delete  Esc=Back", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [Esc] Back", id="help")
+            yield StatusBar("E=Edit  D=Delete  Esc=Back", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -835,7 +962,7 @@ class TransactionListScreen(Screen):
     def load_data(self):
         table = self.query_one("#tx_table", DataTable)
         table.clear()
-        resp = api_get("/transactions")
+        resp = api_get("/transactions", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -921,7 +1048,7 @@ class TransactionListScreen(Screen):
         def on_confirm(confirmed: bool):
             if not confirmed:
                 return
-            resp = api_delete(f"/transactions/{tx_id}")
+            resp = api_delete(f"/transactions/{tx_id}", username=self.app.user.get("username"))
             _, err = handle_response(resp)
             if err:
                 self.app.push_screen(MessageBox(err, "Error"))
@@ -944,8 +1071,9 @@ class TransactionByCategoryScreen(Screen):
             yield Label("TRANSACTIONS BY CATEGORY", classes="menu_header")
             yield Static("-" * 70, classes="separator")
             yield Static(id="accordion_content")
-        yield HelpTip("[↑/↓] Navigate  [Enter] Expand/Collapse  [E] Edit  [D] Delete  [Esc] Back", id="help")
-        yield StatusBar("Enter=Toggle  E=Edit  D=Delete  Esc=Back", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[↑/↓] Navigate  [Enter] Expand/Collapse  [E] Edit  [D] Delete  [Esc] Back", id="help")
+            yield StatusBar("Enter=Toggle  E=Edit  D=Delete  Esc=Back", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -958,14 +1086,14 @@ class TransactionByCategoryScreen(Screen):
         self.load_data()
 
     def load_data(self):
-        resp = api_get("/categories")
+        resp = api_get("/categories", username=self.app.user.get("username"))
         cats, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
         self._categories = cats or []
 
-        resp = api_get("/transactions")
+        resp = api_get("/transactions", username=self.app.user.get("username"))
         txs, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -1096,7 +1224,7 @@ class TransactionByCategoryScreen(Screen):
         def on_confirm(confirmed: bool):
             if not confirmed:
                 return
-            resp = api_delete(f"/transactions/{tx_id}")
+            resp = api_delete(f"/transactions/{tx_id}", username=self.app.user.get("username"))
             _, err = handle_response(resp)
             if err:
                 self.app.push_screen(MessageBox(err, "Error"))
@@ -1131,8 +1259,9 @@ class TransactionAddScreen(Screen):
             with Horizontal(classes="button_row"):
                 yield Button("Save", variant="primary", id="save")
                 yield Button("Cancel", variant="default", id="cancel")
-        yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
-        yield StatusBar("Enter=Save  Esc=Cancel", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
+            yield StatusBar("Enter=Save  Esc=Cancel", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1140,7 +1269,7 @@ class TransactionAddScreen(Screen):
         self.load_sources()
 
     def load_categories(self):
-        resp = api_get("/categories")
+        resp = api_get("/categories", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         sel = self.query_one("#tx_category", Select)
         if err:
@@ -1155,7 +1284,7 @@ class TransactionAddScreen(Screen):
             sel.prompt = "Select category"
 
     def load_sources(self):
-        resp = api_get("/sources")
+        resp = api_get("/sources", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         sel = self.query_one("#tx_source", Select)
         if err:
@@ -1207,7 +1336,7 @@ class TransactionAddScreen(Screen):
         }
         if src_id is not None and src_id != Select.BLANK:
             payload["source_id"] = src_id
-        resp = api_post("/transactions", payload)
+        resp = api_post("/transactions", payload, username=self.app.user.get("username"))
         _, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -1248,14 +1377,15 @@ class TransactionEditScreen(Screen):
             with Horizontal(classes="button_row"):
                 yield Button("Save", variant="primary", id="save")
                 yield Button("Cancel", variant="default", id="cancel")
-        yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
-        yield StatusBar("Enter=Save  Esc=Cancel", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
+            yield StatusBar("Enter=Save  Esc=Cancel", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
         self.load_categories()
         self.load_sources()
-        resp = api_get(f"/transactions/{self.tx_id}")
+        resp = api_get(f"/transactions/{self.tx_id}", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -1271,7 +1401,7 @@ class TransactionEditScreen(Screen):
             self.query_one("#tx_source", Select).value = src_id
 
     def load_categories(self):
-        resp = api_get("/categories")
+        resp = api_get("/categories", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         sel = self.query_one("#tx_category", Select)
         if err:
@@ -1286,7 +1416,7 @@ class TransactionEditScreen(Screen):
             sel.prompt = "Select category"
 
     def load_sources(self):
-        resp = api_get("/sources")
+        resp = api_get("/sources", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         sel = self.query_one("#tx_source", Select)
         if err:
@@ -1338,7 +1468,7 @@ class TransactionEditScreen(Screen):
         }
         if src_id is not None and src_id != Select.BLANK:
             payload["source_id"] = src_id
-        resp = api_put(f"/transactions/{self.tx_id}", payload)
+        resp = api_put(f"/transactions/{self.tx_id}", payload, username=self.app.user.get("username"))
         _, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -1379,8 +1509,9 @@ class ReportsScreen(Screen):
                 ListItem(Label("6. Back to Main Menu")),
                 id="rep_menu_list",
             )
-        yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-5] Quick select  [Esc] Back", id="help")
-        yield StatusBar("Enter=Select  Esc=Back", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-5] Quick select  [Esc] Back", id="help")
+            yield StatusBar("Enter=Select  Esc=Back", id="status")
         yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
@@ -1426,8 +1557,9 @@ class SummaryScreen(Screen):
             yield Label("FINANCIAL SUMMARY", classes="menu_header")
             yield Static("-" * 50, classes="separator")
             yield DataTable(id="sum_table")
-        yield HelpTip("[Esc] Back to Reports menu", id="help")
-        yield StatusBar("Esc=Back", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Esc] Back to Reports menu", id="help")
+            yield StatusBar("Esc=Back", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1439,7 +1571,7 @@ class SummaryScreen(Screen):
     def load_data(self):
         table = self.query_one("#sum_table", DataTable)
         table.clear()
-        resp = api_get("/transactions/summary")
+        resp = api_get("/transactions/summary", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -1461,8 +1593,9 @@ class CategoryReportScreen(Screen):
             yield Label("CATEGORY REPORT", classes="menu_header")
             yield Static("-" * 50, classes="separator")
             yield DataTable(id="rep_table")
-        yield HelpTip("[Esc] Back to Reports menu", id="help")
-        yield StatusBar("Esc=Back", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Esc] Back to Reports menu", id="help")
+            yield StatusBar("Esc=Back", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1474,7 +1607,7 @@ class CategoryReportScreen(Screen):
     def load_data(self):
         table = self.query_one("#rep_table", DataTable)
         table.clear()
-        resp = api_get("/transactions/report/category")
+        resp = api_get("/transactions/report/category", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -1502,8 +1635,9 @@ class MonthlyReportScreen(Screen):
             yield Label("MONTHLY REPORT", classes="menu_header")
             yield Static("-" * 50, classes="separator")
             yield DataTable(id="mon_table")
-        yield HelpTip("[Esc] Back to Reports menu", id="help")
-        yield StatusBar("Esc=Back", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Esc] Back to Reports menu", id="help")
+            yield StatusBar("Esc=Back", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1515,7 +1649,7 @@ class MonthlyReportScreen(Screen):
     def load_data(self):
         table = self.query_one("#mon_table", DataTable)
         table.clear()
-        resp = api_get("/transactions/report/monthly")
+        resp = api_get("/transactions/report/monthly", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -1546,8 +1680,9 @@ class BarChartScreen(Screen):
             yield Label("CATEGORY BAR CHART", classes="menu_header")
             yield Static("-" * 70, classes="separator")
             yield Static(id="chart_content")
-        yield HelpTip("[Esc] Back to Reports menu", id="help")
-        yield StatusBar("Esc=Back", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Esc] Back to Reports menu", id="help")
+            yield StatusBar("Esc=Back", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1574,7 +1709,7 @@ class BarChartScreen(Screen):
         return "\n".join(lines)
 
     def load_chart(self):
-        resp = api_get("/transactions/report/category-chart")
+        resp = api_get("/transactions/report/category-chart", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         content = self.query_one("#chart_content", Static)
         if err:
@@ -1599,8 +1734,9 @@ class PieChartScreen(Screen):
             yield Label("CATEGORY PIE CHART", classes="menu_header")
             yield Static("-" * 70, classes="separator")
             yield Static(id="chart_content")
-        yield HelpTip("[Esc] Back to Reports menu", id="help")
-        yield StatusBar("Esc=Back", id="status")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Esc] Back to Reports menu", id="help")
+            yield StatusBar("Esc=Back", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1660,7 +1796,7 @@ class PieChartScreen(Screen):
 
     def load_chart(self):
         import math
-        resp = api_get("/transactions/report/category-chart")
+        resp = api_get("/transactions/report/category-chart", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         content = self.query_one("#chart_content", Static)
         if err:
@@ -1789,8 +1925,13 @@ class AccountingApp(App):
         margin: 0 1 0 0;
     }
 
-    HelpTip {
+    .bottom_bar {
         dock: bottom;
+        height: 2;
+        width: 100%;
+    }
+
+    HelpTip {
         height: 1;
         background: $primary-darken-3;
         color: $text-muted;
@@ -1798,7 +1939,6 @@ class AccountingApp(App):
     }
 
     StatusBar {
-        dock: bottom;
         height: 1;
         background: $primary-darken-2;
         color: $text;
@@ -1832,7 +1972,13 @@ class AccountingApp(App):
     """
 
     def on_mount(self):
-        self.push_screen(MainMenuScreen())
+        self.push_screen(LoginScreen())
+
+    def action_quit(self):
+        def on_confirm(confirmed: bool):
+            if confirmed:
+                self.exit()
+        self.push_screen(ConfirmBox("Are you sure you want to exit?", "Exit Confirmation"), on_confirm)
 
 
 def main():
