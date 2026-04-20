@@ -115,7 +115,7 @@ A personal accounting application with Flask REST API backend and multiple front
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
+git clone https://github.com/MortezaMirjavadi/flask-accounting-tui.git
 cd terminal_accounting
 ```
 
