@@ -15,9 +15,85 @@ A personal accounting application with Flask REST API backend and multiple front
 - **argparse** - CLI argument parsing
 
 ### Database Schema
-- **categories** - Income/cost categories (id, name, type)
-- **sources** - Financial sources with balances (id, name, amount)
-- **transactions** - Financial transactions with Jalali date support (id, date, amount, category_id, source_id, description, created_at)
+
+#### Tables
+
+**categories**
+```
+┌────────────┬──────────┬─────────────┬─────────────────────────────┐
+│ Column     │ Type     │ Constraints │ Description                 │
+├────────────┼──────────┼─────────────┼─────────────────────────────┤
+│ id         │ INTEGER  │ PRIMARY KEY │ Auto-increment ID           │
+│ name       │ TEXT     │ NOT NULL    │ Category name (unique)      │
+│            │          │ UNIQUE      │                             │
+│ type       │ TEXT     │ NOT NULL    │ 'income' or 'cost'          │
+│            │          │ CHECK       │                             │
+└────────────┴──────────┴─────────────┴─────────────────────────────┘
+```
+
+**sources**
+```
+┌────────────┬──────────┬─────────────┬─────────────────────────────┐
+│ Column     │ Type     │ Constraints │ Description                 │
+├────────────┼──────────┼─────────────┼─────────────────────────────┤
+│ id         │ INTEGER  │ PRIMARY KEY │ Auto-increment ID           │
+│ name       │ TEXT     │ NOT NULL    │ Source name (unique)        │
+│            │          │ UNIQUE      │                             │
+│ amount     │ REAL     │ NOT NULL    │ Current balance             │
+│            │          │ DEFAULT 0   │                             │
+└────────────┴──────────┴─────────────┴─────────────────────────────┘
+```
+
+**transactions**
+```
+┌─────────────┬──────────┬─────────────┬─────────────────────────────┐
+│ Column      │ Type     │ Constraints │ Description                 │
+├─────────────┼──────────┼─────────────┼─────────────────────────────┤
+│ id          │ INTEGER  │ PRIMARY KEY │ Auto-increment ID           │
+│ date        │ TEXT     │ NOT NULL    │ Transaction date (Gregorian)│
+│ amount      │ REAL     │ NOT NULL    │ Transaction amount          │
+│ category_id │ INTEGER  │ FOREIGN KEY │ References categories(id)   │
+│ source_id   │ INTEGER  │ FOREIGN KEY │ References sources(id)      │
+│ description │ TEXT     │             │ Optional description        │
+│ created_at  │ TEXT     │ DEFAULT     │ Timestamp (auto-generated)  │
+│             │          │ CURRENT_TS  │                             │
+└─────────────┴──────────┴─────────────┴─────────────────────────────┘
+```
+
+#### Entity Relationships
+
+```
+┌──────────────┐
+│  categories  │
+│──────────────│
+│ id (PK)      │
+│ name         │
+│ type         │
+└──────────────┘
+       │
+       │ 1
+       │
+       │
+       │ *
+       ▼
+┌──────────────┐         ┌──────────────┐
+│ transactions │    *    │   sources    │
+│──────────────│◄────────│──────────────│
+│ id (PK)      │         │ id (PK)      │
+│ date         │    1    │ name         │
+│ amount       │         │ amount       │
+│ category_id  │         └──────────────┘
+│ source_id    │
+│ description  │
+│ created_at   │
+└──────────────┘
+```
+
+**Relationships:**
+- One category can have many transactions (1:N)
+- One source can have many transactions (1:N)
+- Transactions store dates in Gregorian format internally
+- API accepts/returns dates in Jalali format (YYYY-MM-DD)
 
 ## Features
 
