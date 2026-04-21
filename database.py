@@ -160,5 +160,34 @@ def init_db():
             """
         )
 
+    # Budget periods
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS budget_periods (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            year INTEGER NOT NULL,
+            month INTEGER NOT NULL CHECK(month BETWEEN 1 AND 12),
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, year, month)
+        )
+        """
+    )
+
+    # Budget items
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS budget_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            budget_period_id INTEGER NOT NULL REFERENCES budget_periods(id) ON DELETE CASCADE,
+            category_id INTEGER NOT NULL REFERENCES categories(id),
+            planned_amount REAL NOT NULL,
+            notes TEXT,
+            UNIQUE(budget_period_id, category_id)
+        )
+        """
+    )
+
+
     conn.commit()
     conn.close()

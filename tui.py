@@ -6,7 +6,7 @@ import jdatetime
 import requests
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
@@ -24,6 +24,35 @@ from textual.widgets import (
 )
 
 BASE_URL = "http://127.0.0.1:5000"
+
+
+# Persian month names mapping
+PERSIAN_MONTHS = [
+    ("1 - Farvardin", 1),
+    ("2 - Ordibehesht", 2),
+    ("3 - Khordad", 3),
+    ("4 - Tir", 4),
+    ("5 - Mordad", 5),
+    ("6 - Shahrivar", 6),
+    ("7 - Mehr", 7),
+    ("8 - Aban", 8),
+    ("9 - Azar", 9),
+    ("10 - Dey", 10),
+    ("11 - Bahman", 11),
+    ("12 - Esfand", 12),
+]
+
+
+def get_persian_month_name(month_num):
+    """Get Persian month name from month number."""
+    month_names = {
+        1: "Farvardin", 2: "Ordibehesht", 3: "Khordad",
+        4: "Tir", 5: "Mordad", 6: "Shahrivar",
+        7: "Mehr", 8: "Aban", 9: "Azar",
+        10: "Dey", 11: "Bahman", 12: "Esfand"
+    }
+    return month_names.get(month_num, str(month_num))
+
 
 # ---------------------------------------------------------------------------
 # API helpers
@@ -249,7 +278,8 @@ class MainMenuScreen(Screen):
         Binding("2", "go_sources", "Sources"),
         Binding("3", "go_transactions", "Transactions"),
         Binding("4", "go_reports", "Reports"),
-        Binding("5", "go_settings", "Settings"),
+        Binding("5", "go_budget", "Budget"),
+        Binding("6", "go_settings", "Settings"),
         Binding("l", "logout", "Logout"),
     ]
 
@@ -269,16 +299,17 @@ class MainMenuScreen(Screen):
                 ListItem(Label("2. Sources")),
                 ListItem(Label("3. Transactions")),
                 ListItem(Label("4. Reports")),
-                ListItem(Label("5. Settings")),
-                ListItem(Label("6. Logout")),
-                ListItem(Label("7. Exit")),
+                ListItem(Label("5. Budget")),
+                ListItem(Label("6. Settings")),
+                ListItem(Label("7. Logout")),
+                ListItem(Label("8. Exit")),
                 id="main_menu_list",
             )
         with Vertical(classes="bottom_bar"):
             now = datetime.now()
             jalali_now = jdatetime.datetime.fromgregorian(datetime=now)
             shamsi_str = jalali_now.strftime("%Y-%m-%d")
-            yield HelpTip(f"Date: [{shamsi_str}]  [↑/↓] Navigate  [Enter] Select  [1-5] Quick select  [L] Logout  [Q] Exit", id="help")
+            yield HelpTip(f"Date: [{shamsi_str}]  [↑/↓] Navigate  [Enter] Select  [1-6] Quick select  [L] Logout  [Q] Exit", id="help")
             yield StatusBar("Enter=Select  Esc=Back  L=Logout  Q=Quit", id="status")
         yield Footer()
 
@@ -293,10 +324,12 @@ class MainMenuScreen(Screen):
         elif idx == 3:
             self.app.push_screen(ReportsScreen())
         elif idx == 4:
-            self.app.push_screen(SettingsScreen())
+            self.app.push_screen(BudgetScreen())
         elif idx == 5:
-            self.action_logout()
+            self.app.push_screen(SettingsScreen())
         elif idx == 6:
+            self.action_logout()
+        elif idx == 7:
             self.app.action_quit()
 
     def action_go_categories(self):
@@ -310,6 +343,9 @@ class MainMenuScreen(Screen):
 
     def action_go_reports(self):
         self.app.push_screen(ReportsScreen())
+
+    def action_go_budget(self):
+        self.app.push_screen(BudgetScreen())
 
     def action_go_settings(self):
         self.app.push_screen(SettingsScreen())
@@ -344,7 +380,7 @@ class CategoriesScreen(Screen):
                 id="cat_menu_list",
             )
         with Vertical(classes="bottom_bar"):
-            yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-2] Quick select  [Esc] Back", id="help")
+            yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-3] Quick select  [Esc] Back", id="help")
             yield StatusBar("Enter=Select  Esc=Back", id="status")
         yield Footer()
 
@@ -660,7 +696,7 @@ class SourcesScreen(Screen):
                 id="src_menu_list",
             )
         with Vertical(classes="bottom_bar"):
-            yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-2] Quick select  [Esc] Back", id="help")
+            yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-3] Quick select  [Esc] Back", id="help")
             yield StatusBar("Enter=Select  Esc=Back", id="status")
         yield Footer()
 
@@ -1417,6 +1453,15 @@ class TransactionAddScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
+        # Set current Jalali date as default
+        from datetime import datetime
+        import jdatetime
+        now = datetime.now()
+        jalali_now = jdatetime.datetime.fromgregorian(datetime=now)
+        date_str = jalali_now.strftime("%Y-%m-%d")
+        date_input = self.query_one("#tx_date", Input)
+        date_input.value = date_str
+        
         self.load_categories()
         self.load_sources()
 
@@ -1535,6 +1580,15 @@ class TransactionEditScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
+        # Set current Jalali date as default
+        from datetime import datetime
+        import jdatetime
+        now = datetime.now()
+        jalali_now = jdatetime.datetime.fromgregorian(datetime=now)
+        date_str = jalali_now.strftime("%Y-%m-%d")
+        date_input = self.query_one("#tx_date", Input)
+        date_input.value = date_str
+        
         self.load_categories()
         self.load_sources()
         resp = api_get(f"/transactions/{self.tx_id}", username=self.app.user.get("username"))
@@ -1662,7 +1716,7 @@ class ReportsScreen(Screen):
                 id="rep_menu_list",
             )
         with Vertical(classes="bottom_bar"):
-            yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-5] Quick select  [Esc] Back", id="help")
+            yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-6] Quick select  [Esc] Back", id="help")
             yield StatusBar("Enter=Select  Esc=Back", id="status")
         yield Footer()
 
@@ -1968,6 +2022,821 @@ class PieChartScreen(Screen):
 
 
 # ---------------------------------------------------------------------------
+# Budget
+# ---------------------------------------------------------------------------
+
+class BudgetScreen(Screen):
+    BINDINGS = [
+        Binding("escape", "go_back", "Back"),
+        Binding("1", "go_tree", "Tree View"),
+        Binding("2", "go_periods", "Periods"),
+        Binding("3", "go_report", "Report"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Container(classes="main_panel"):
+            yield Label("BUDGET MANAGEMENT", classes="menu_header")
+            yield Rule()
+            yield ListView(
+                ListItem(Label("1. Budget Tree View")),
+                ListItem(Label("2. Budget Periods")),
+                ListItem(Label("3. Budget Report")),
+                ListItem(Label("4. Back")),
+                id="budget_list",
+            )
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-3] Quick select  [Esc] Back", id="help")
+            yield StatusBar("Enter=Select  Esc=Back", id="status")
+        yield Footer()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        idx = event.list_view.index
+        if idx == 0:
+            self.app.push_screen(BudgetTreeScreen())
+        elif idx == 1:
+            self.app.push_screen(BudgetPeriodListScreen())
+        elif idx == 2:
+            self.app.push_screen(BudgetReportScreen())
+        elif idx == 3:
+            self.action_go_back()
+
+    def action_go_tree(self):
+        self.app.push_screen(BudgetTreeScreen())
+
+    def action_go_periods(self):
+        self.app.push_screen(BudgetPeriodListScreen())
+
+    def action_go_report(self):
+        self.app.push_screen(BudgetReportScreen())
+
+    def action_go_back(self):
+        self.app.pop_screen()
+
+
+
+
+class BudgetTreeScreen(Screen):
+    BINDINGS = [
+        Binding("escape", "go_back", "Back"),
+        Binding("r", "refresh", "Refresh"),
+        Binding("enter", "select_item", "Select"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Container(classes="wide_panel"):
+            yield Label("BUDGET TREE VIEW", classes="detail_header")
+            yield Rule()
+            with VerticalScroll(id="tree_scroll"):
+                yield Static("", id="tree_content")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[↑/↓] Navigate  [Enter] Select Period/Item  [R] Refresh  [Esc] Back", id="help")
+            yield StatusBar("Loading...", id="status")
+        yield Footer()
+
+    def on_mount(self):
+        self.load_tree()
+
+    def load_tree(self):
+        status = self.query_one("#status", StatusBar)
+        tree_content = self.query_one("#tree_content", Static)
+        
+        # Fetch all budget periods
+        resp = api_get("/budget/periods", username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        
+        if err:
+            status.update(f"Error: {err}")
+            tree_content.update(f"Error loading budget data: {err}")
+            return
+        
+        if not data:
+            status.update("No budget periods found")
+            tree_content.update("No budget periods found. Create a period first.")
+            return
+        
+        # Build tree structure
+        tree_lines = []
+        tree_lines.append("BUDGET PERIODS AND ITEMS")
+        tree_lines.append("=" * 60)
+        tree_lines.append("")
+        
+        for i, period in enumerate(data):
+            is_last_period = (i == len(data) - 1)
+            period_prefix = "└── " if is_last_period else "├── "
+            
+            month_name = get_persian_month_name(period["month"])
+            tree_lines.append(f"{period_prefix}📅 {period['year']}/{period['month']} ({month_name})")
+            
+            # Fetch items for this period
+            items_resp = api_get(f"/budget/periods/{period['id']}/items", username=self.app.user.get("username"))
+            items_data, _ = handle_response(items_resp)
+            
+            if items_data:
+                for j, item in enumerate(items_data):
+                    is_last_item = (j == len(items_data) - 1)
+                    
+                    if is_last_period:
+                        item_prefix = "    └── " if is_last_item else "    ├── "
+                    else:
+                        item_prefix = "│   └── " if is_last_item else "│   ├── "
+                    
+                    planned = format_toman(item["planned_amount"])
+                    tree_lines.append(f"{item_prefix}💰 {item['category_name']}: {planned}")
+                    
+                    # Add notes if present
+                    if item.get("notes"):
+                        if is_last_period:
+                            note_prefix = "        " if is_last_item else "    │   "
+                        else:
+                            note_prefix = "│       " if is_last_item else "│   │   "
+                        tree_lines.append(f"{note_prefix}📝 {item['notes']}")
+            else:
+                if is_last_period:
+                    tree_lines.append("    └── (No items)")
+                else:
+                    tree_lines.append("│   └── (No items)")
+            
+            tree_lines.append("")
+        
+        tree_content.update("\n".join(tree_lines))
+        status.update(f"Loaded {len(data)} period(s). Press [R] to refresh")
+
+    def action_refresh(self):
+        self.load_tree()
+
+    def action_select_item(self):
+        # For now, just refresh. Could be enhanced to navigate to specific period/item
+        self.action_refresh()
+
+    def action_go_back(self):
+        self.app.pop_screen()
+
+
+class BudgetPeriodListScreen(Screen):
+    BINDINGS = [
+        Binding("escape", "go_back", "Back"),
+        Binding("a", "add_period", "Add"),
+        Binding("e", "edit_period", "Edit"),
+        Binding("d", "delete_period", "Delete"),
+        Binding("i", "manage_items", "Items"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Container(classes="wide_panel"):
+            yield Label("BUDGET PERIODS", classes="detail_header")
+            yield Rule()
+            yield DataTable(id="periods_table")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[↑/↓] Navigate  [A] Add  [E] Edit  [D] Delete  [I] Items  [Esc] Back", id="help")
+            yield StatusBar("Loading...", id="status")
+        yield Footer()
+
+    def on_mount(self):
+        table = self.query_one("#periods_table", DataTable)
+        table.add_columns("ID", "Year", "Month", "Items")
+        table.cursor_type = "row"
+        self.load_periods()
+
+    def load_periods(self):
+        table = self.query_one("#periods_table", DataTable)
+        table.clear()
+        resp = api_get("/budget/periods", username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        status = self.query_one("#status", StatusBar)
+        if err:
+            status.update(f"Error: {err}")
+            return
+        if not data:
+            status.update("No budget periods found. Press [A] to add one.")
+            return
+        for period in data:
+            # Count items for this period
+            items_resp = api_get(f"/budget/periods/{period['id']}/items", username=self.app.user.get("username"))
+            items_data, _ = handle_response(items_resp)
+            item_count = len(items_data) if items_data else 0
+            month_name = get_persian_month_name(period["month"])
+            table.add_row(
+                str(period["id"]),
+                str(period["year"]),
+                f"{period['month']} - {month_name}",
+                str(item_count),
+                key=str(period["id"]),
+            )
+            # Store the actual month number in the row for later retrieval
+            if not hasattr(table, '_month_map'):
+                table._month_map = {}
+            table._month_map[str(period["id"])] = period["month"]
+        status.update(f"Loaded {len(data)} period(s). [A] Add  [E] Edit  [D] Delete  [I] Items")
+
+    def action_add_period(self):
+        # self.app.push_screen(BudgetPeriodAddScreen(), lambda _: self.load_periods())
+        # self.app.push_screen(BudgetPeriodAddScreen(), callback=lambda result: self.load_periods())
+        self.app.push_screen(BudgetPeriodAddScreen(), self.after_add)
+
+    def after_add(self, result):
+        self.load_periods()
+
+
+    def action_edit_period(self):
+        table = self.query_one("#periods_table", DataTable)
+        if table.row_count == 0:
+            self.app.push_screen(MessageBox("No periods to edit.", "Info"))
+            return
+        row_key = table.get_row_at(table.cursor_row)
+        period_id = int(row_key[0])
+        self.app.push_screen(BudgetPeriodEditScreen(period_id), lambda _: self.load_periods())
+
+    def action_delete_period(self):
+        table = self.query_one("#periods_table", DataTable)
+        if table.row_count == 0:
+            self.app.push_screen(MessageBox("No periods to delete.", "Info"))
+            return
+        row_key = table.get_row_at(table.cursor_row)
+        period_id = int(row_key[0])
+
+        def on_confirm(confirmed: bool):
+            if confirmed:
+                self._do_delete(period_id)
+
+        self.app.push_screen(
+            ConfirmBox("Delete this budget period and all its items?", "Confirm Delete"),
+            on_confirm,
+        )
+
+    def _do_delete(self, period_id):
+        resp = api_delete(f"/budget/periods/{period_id}", username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        if err:
+            self.app.push_screen(MessageBox(err, "Error"))
+        else:
+            self.load_periods()
+
+    def action_manage_items(self):
+        table = self.query_one("#periods_table", DataTable)
+        if table.row_count == 0:
+            self.app.push_screen(MessageBox("No periods available. Add a period first.", "Info"))
+            return
+        row_key = table.get_row_at(table.cursor_row)
+        period_id = int(row_key[0])
+        year = int(row_key[1])
+        # Get month from the stored map or extract from display string
+        if hasattr(table, '_month_map'):
+            month = table._month_map.get(str(period_id))
+        else:
+            # Fallback: extract from display string "2 - Ordibehesht"
+            month_str = row_key[2].split(' - ')[0]
+            month = int(month_str)
+        self.app.push_screen(BudgetItemListScreen(period_id, year, month))
+
+    def action_go_back(self):
+        self.app.pop_screen()
+
+
+class BudgetPeriodAddScreen(Screen):
+    BINDINGS = [
+        Binding("escape", "go_back", "Back"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Container(classes="main_panel"):
+            yield Label("ADD BUDGET PERIOD", classes="detail_header")
+            yield Rule()
+            yield Label("Year (Jalali):")
+            yield Input(placeholder="e.g., 1403", id="year_input")
+            yield Label("Month:")
+            yield Select(PERSIAN_MONTHS, id="month_select", allow_blank=False)
+            with Horizontal(classes="button_row"):
+                yield Button("Save", variant="primary", id="save_btn")
+                yield Button("Cancel", id="cancel_btn")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
+            yield StatusBar("Fill in the fields and press Save", id="status")
+        yield Footer()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save_btn":
+            self.action_save()
+        elif event.button.id == "cancel_btn":
+            self.action_go_back()
+
+    def action_save(self):
+        year_input = self.query_one("#year_input", Input)
+        month_select = self.query_one("#month_select", Select)
+        status = self.query_one("#status", StatusBar)
+
+        year = year_input.value.strip()
+
+        if not year:
+            status.update("Error: Year is required")
+            return
+
+        if month_select.value == Select.BLANK:
+            status.update("Error: Please select a month")
+            return
+
+        try:
+            year_int = int(year)
+            month_int = month_select.value
+        except ValueError:
+            status.update("Error: Year must be a valid number")
+            return
+
+        payload = {"year": year_int, "month": month_int}
+        resp = api_post("/budget/periods", payload, username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        if err:
+            status.update(f"Error: {err}")
+        else:
+            self.dismiss(True)
+
+    def action_go_back(self):
+        self.app.pop_screen()
+
+
+class BudgetPeriodEditScreen(Screen):
+    BINDINGS = [
+        Binding("escape", "go_back", "Back"),
+    ]
+
+    def __init__(self, period_id, **kwargs):
+        super().__init__(**kwargs)
+        self.period_id = period_id
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Container(classes="main_panel"):
+            yield Label("EDIT BUDGET PERIOD", classes="detail_header")
+            yield Rule()
+            yield Label("Year (Jalali):")
+            yield Input(placeholder="e.g., 1403", id="year_input")
+            yield Label("Month:")
+            yield Select(PERSIAN_MONTHS, id="month_select", allow_blank=False)
+            with Horizontal(classes="button_row"):
+                yield Button("Save", variant="primary", id="save_btn")
+                yield Button("Cancel", id="cancel_btn")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
+            yield StatusBar("Loading...", id="status")
+        yield Footer()
+
+    def on_mount(self):
+        self.load_period()
+
+    def load_period(self):
+        resp = api_get(f"/budget/periods/{self.period_id}", username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        status = self.query_one("#status", StatusBar)
+        if err:
+            status.update(f"Error: {err}")
+            return
+        year_input = self.query_one("#year_input", Input)
+        month_select = self.query_one("#month_select", Select)
+        year_input.value = str(data["year"])
+        month_select.value = data["month"]
+        status.update("Edit the fields and press Save")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save_btn":
+            self.action_save()
+        elif event.button.id == "cancel_btn":
+            self.action_go_back()
+
+    def action_save(self):
+        year_input = self.query_one("#year_input", Input)
+        month_select = self.query_one("#month_select", Select)
+        status = self.query_one("#status", StatusBar)
+
+        year = year_input.value.strip()
+
+        if not year:
+            status.update("Error: Year is required")
+            return
+
+        if month_select.value == Select.BLANK:
+            status.update("Error: Please select a month")
+            return
+
+        try:
+            year_int = int(year)
+            month_int = month_select.value
+        except ValueError:
+            status.update("Error: Year must be a valid number")
+            return
+
+        payload = {"year": year_int, "month": month_int}
+        resp = api_put(f"/budget/periods/{self.period_id}", payload, username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        if err:
+            status.update(f"Error: {err}")
+        else:
+            self.app.pop_screen()
+
+    def action_go_back(self):
+        self.app.pop_screen()
+
+
+class BudgetItemListScreen(Screen):
+    BINDINGS = [
+        Binding("escape", "go_back", "Back"),
+        Binding("a", "add_item", "Add"),
+        Binding("e", "edit_item", "Edit"),
+        Binding("d", "delete_item", "Delete"),
+    ]
+
+    def __init__(self, period_id, year, month, **kwargs):
+        super().__init__(**kwargs)
+        self.period_id = period_id
+        self.year = year
+        self.month = month
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Container(classes="wide_panel"):
+            month_name = get_persian_month_name(self.month)
+            yield Label(f"BUDGET ITEMS - {self.year}/{self.month} ({month_name})", classes="detail_header")
+            yield Rule()
+            yield DataTable(id="items_table")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[↑/↓] Navigate  [A] Add  [E] Edit  [D] Delete  [Esc] Back", id="help")
+            yield StatusBar("Loading...", id="status")
+        yield Footer()
+
+    def on_mount(self):
+        table = self.query_one("#items_table", DataTable)
+        table.add_columns("ID", "Category", "Planned Amount", "Notes")
+        table.cursor_type = "row"
+        self.load_items()
+
+    def load_items(self):
+        table = self.query_one("#items_table", DataTable)
+        table.clear()
+        resp = api_get(f"/budget/periods/{self.period_id}/items", username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        status = self.query_one("#status", StatusBar)
+        if err:
+            status.update(f"Error: {err}")
+            return
+        if not data:
+            status.update("No budget items found. Press [A] to add one.")
+            return
+        for item in data:
+            table.add_row(
+                str(item["id"]),
+                item["category_name"],
+                format_toman(item["planned_amount"]),
+                item.get("notes", "") or "",
+                key=str(item["id"]),
+            )
+        status.update(f"Loaded {len(data)} item(s). [A] Add  [E] Edit  [D] Delete")
+
+    def action_add_item(self):
+        self.app.push_screen(BudgetItemAddScreen(self.period_id), lambda _: self.load_items())
+
+    def action_edit_item(self):
+        table = self.query_one("#items_table", DataTable)
+        if table.row_count == 0:
+            self.app.push_screen(MessageBox("No items to edit.", "Info"))
+            return
+        row_key = table.get_row_at(table.cursor_row)
+        item_id = int(row_key[0])
+        self.app.push_screen(BudgetItemEditScreen(item_id), lambda _: self.load_items())
+
+    def action_delete_item(self):
+        table = self.query_one("#items_table", DataTable)
+        if table.row_count == 0:
+            self.app.push_screen(MessageBox("No items to delete.", "Info"))
+            return
+        row_key = table.get_row_at(table.cursor_row)
+        item_id = int(row_key[0])
+
+        def on_confirm(confirmed: bool):
+            if confirmed:
+                self._do_delete(item_id)
+
+        self.app.push_screen(
+            ConfirmBox("Delete this budget item?", "Confirm Delete"),
+            on_confirm,
+        )
+
+    def _do_delete(self, item_id):
+        resp = api_delete(f"/budget/items/{item_id}", username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        if err:
+            self.app.push_screen(MessageBox(err, "Error"))
+        else:
+            self.load_items()
+
+    def action_go_back(self):
+        self.app.pop_screen()
+
+
+class BudgetItemAddScreen(Screen):
+    BINDINGS = [
+        Binding("escape", "go_back", "Back"),
+    ]
+
+    def __init__(self, period_id, **kwargs):
+        super().__init__(**kwargs)
+        self.period_id = period_id
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Container(classes="main_panel"):
+            yield Label("ADD BUDGET ITEM", classes="detail_header")
+            yield Rule()
+            yield Label("Category:")
+            yield Select([("Loading...", None)], id="category_select", allow_blank=False)
+            yield Label("Planned Amount (Toman):")
+            yield Input(placeholder="e.g., 1000000", id="amount_input")
+            yield Label("Notes (optional):")
+            yield Input(placeholder="Optional notes", id="notes_input")
+            with Horizontal(classes="button_row"):
+                yield Button("Save", variant="primary", id="save_btn")
+                yield Button("Cancel", id="cancel_btn")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
+            yield StatusBar("Loading categories...", id="status")
+        yield Footer()
+
+    def on_mount(self):
+        self.load_categories()
+
+    def load_categories(self):
+        resp = api_get("/categories", username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        status = self.query_one("#status", StatusBar)
+        if err:
+            status.update(f"Error: {err}")
+            return
+        if not data:
+            status.update("No categories found. Please add categories first.")
+            return
+        cat_select = self.query_one("#category_select", Select)
+        options = [(cat["name"], cat["id"]) for cat in data]
+        cat_select.set_options(options)
+        status.update("Fill in the fields and press Save")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save_btn":
+            self.action_save()
+        elif event.button.id == "cancel_btn":
+            self.action_go_back()
+
+    def action_save(self):
+        cat_select = self.query_one("#category_select", Select)
+        amount_input = self.query_one("#amount_input", Input)
+        notes_input = self.query_one("#notes_input", Input)
+        status = self.query_one("#status", StatusBar)
+
+        if cat_select.value == Select.BLANK:
+            status.update("Error: Please select a category")
+            return
+
+        amount = amount_input.value.strip()
+        if not amount:
+            status.update("Error: Amount is required")
+            return
+
+        try:
+            amount_float = float(amount)
+        except ValueError:
+            status.update("Error: Amount must be a valid number")
+            return
+
+        payload = {
+            "budget_period_id": self.period_id,
+            "category_id": cat_select.value,
+            "planned_amount": amount_float,
+            "notes": notes_input.value.strip() or None,
+        }
+        resp = api_post("/budget/items", payload, username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        if err:
+            status.update(f"Error: {err}")
+        else:
+            self.dismiss(True)
+
+    def action_go_back(self):
+        self.app.pop_screen()
+
+
+class BudgetItemEditScreen(Screen):
+    BINDINGS = [
+        Binding("escape", "go_back", "Back"),
+    ]
+
+    def __init__(self, item_id, **kwargs):
+        super().__init__(**kwargs)
+        self.item_id = item_id
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Container(classes="main_panel"):
+            yield Label("EDIT BUDGET ITEM", classes="detail_header")
+            yield Rule()
+            yield Label("Category:")
+            yield Select([("Loading...", None)], id="category_select", allow_blank=False)
+            yield Label("Planned Amount (Toman):")
+            yield Input(placeholder="e.g., 1000000", id="amount_input")
+            yield Label("Notes (optional):")
+            yield Input(placeholder="Optional notes", id="notes_input")
+            with Horizontal(classes="button_row"):
+                yield Button("Save", variant="primary", id="save_btn")
+                yield Button("Cancel", id="cancel_btn")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
+            yield StatusBar("Loading...", id="status")
+        yield Footer()
+
+    def on_mount(self):
+        self.load_categories()
+
+    def load_categories(self):
+        resp = api_get("/categories", username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        status = self.query_one("#status", StatusBar)
+        if err:
+            status.update(f"Error: {err}")
+            return
+        if not data:
+            status.update("No categories found.")
+            return
+        cat_select = self.query_one("#category_select", Select)
+        options = [(cat["name"], cat["id"]) for cat in data]
+        cat_select.set_options(options)
+        self.load_item()
+
+    def load_item(self):
+        resp = api_get(f"/budget/items/{self.item_id}", username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        status = self.query_one("#status", StatusBar)
+        if err:
+            status.update(f"Error: {err}")
+            return
+        cat_select = self.query_one("#category_select", Select)
+        amount_input = self.query_one("#amount_input", Input)
+        notes_input = self.query_one("#notes_input", Input)
+        cat_select.value = data["category_id"]
+        amount_input.value = str(data["planned_amount"])
+        notes_input.value = data.get("notes", "") or ""
+        status.update("Edit the fields and press Save")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save_btn":
+            self.action_save()
+        elif event.button.id == "cancel_btn":
+            self.action_go_back()
+
+    def action_save(self):
+        cat_select = self.query_one("#category_select", Select)
+        amount_input = self.query_one("#amount_input", Input)
+        notes_input = self.query_one("#notes_input", Input)
+        status = self.query_one("#status", StatusBar)
+
+        if cat_select.value == Select.BLANK:
+            status.update("Error: Please select a category")
+            return
+
+        amount = amount_input.value.strip()
+        if not amount:
+            status.update("Error: Amount is required")
+            return
+
+        try:
+            amount_float = float(amount)
+        except ValueError:
+            status.update("Error: Amount must be a valid number")
+            return
+
+        payload = {
+            "category_id": cat_select.value,
+            "planned_amount": amount_float,
+            "notes": notes_input.value.strip() or None,
+        }
+        resp = api_put(f"/budget/items/{self.item_id}", payload, username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        if err:
+            status.update(f"Error: {err}")
+        else:
+            self.app.pop_screen()
+
+    def action_go_back(self):
+        self.app.pop_screen()
+
+
+class BudgetReportScreen(Screen):
+    BINDINGS = [
+        Binding("escape", "go_back", "Back"),
+        Binding("r", "refresh", "Refresh"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Container(classes="wide_panel"):
+            yield Label("BUDGET REPORT", classes="detail_header")
+            yield Rule()
+            with Horizontal(classes="filter_row"):
+                yield Label("Year:")
+                yield Input(placeholder="1403", id="year_input", classes="filter_input")
+                yield Label("Month:")
+                yield Select(PERSIAN_MONTHS, id="month_select", allow_blank=False)
+                yield Button("Load Report", variant="primary", id="load_btn")
+            yield DataTable(id="report_table")
+            yield Static("", id="summary_text")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Tab] Navigate  [Enter] Load  [R] Refresh  [Esc] Back", id="help")
+            yield StatusBar("Enter year and month, then press Load Report", id="status")
+        yield Footer()
+
+    def on_mount(self):
+        table = self.query_one("#report_table", DataTable)
+        table.add_columns("Category", "Planned", "Spent", "Remaining", "Status")
+        table.cursor_type = "row"
+        # Pre-fill with current Jalali date
+        now = datetime.now()
+        jalali_now = jdatetime.datetime.fromgregorian(datetime=now)
+        year_input = self.query_one("#year_input", Input)
+        month_select = self.query_one("#month_select", Select)
+        year_input.value = str(jalali_now.year)
+        month_select.value = jalali_now.month
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "load_btn":
+            self.action_load_report()
+
+    def action_load_report(self):
+        year_input = self.query_one("#year_input", Input)
+        month_select = self.query_one("#month_select", Select)
+        status = self.query_one("#status", StatusBar)
+
+        year = year_input.value.strip()
+        month = month_select.value
+
+        if not year:
+            status.update("Error: Year is required")
+            return
+
+        if month_select.value == Select.BLANK:
+            status.update("Error: Please select a month")
+            return
+
+        try:
+            year_int = int(year)
+            month_int = month_select.value
+        except ValueError:
+            status.update("Error: Year must be a valid number")
+            return
+
+        params = {"year": year_int, "month": month_int}
+        resp = api_get("/budget/report", params=params, username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        if err:
+            status.update(f"Error: {err}")
+            return
+
+        table = self.query_one("#report_table", DataTable)
+        table.clear()
+
+        categories = data.get("categories", [])
+        if not categories:
+            status.update("No budget data found for this period.")
+            return
+
+        for cat in categories:
+            remaining = cat["remaining_amount"]
+            if remaining >= 0:
+                status_text = "✓ OK"
+            else:
+                status_text = "✗ Over"
+            table.add_row(
+                cat["category_name"],
+                format_toman(cat["planned_amount"]),
+                format_toman(cat["total_spent"]),
+                format_toman(remaining),
+                status_text,
+            )
+
+        summary = self.query_one("#summary_text", Static)
+        total_planned = data.get("total_planned", 0)
+        total_spent = data.get("total_spent", 0)
+        total_remaining = data.get("total_remaining", 0)
+        summary_text = f"\nTOTAL: Planned={format_toman(total_planned)}  Spent={format_toman(total_spent)}  Remaining={format_toman(total_remaining)}"
+        summary.update(summary_text)
+        status.update(f"Report loaded for {year}/{month}")
+
+    def action_refresh(self):
+        self.action_load_report()
+
+    def action_go_back(self):
+        self.app.pop_screen()
+
+
+
+# ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
 
@@ -2043,10 +2912,20 @@ class AccountingApp(App):
 
     .wide_panel {
         width: 100%;
-        height: auto;
+        height: 1fr;
         border: solid $primary;
-        padding: 1 2;
+        padding: 1;
         background: $surface;
+    }
+
+    #tree_scroll {
+        height: 1fr;
+        border: solid $primary;
+    }
+
+    #tree_content {
+        width: 100%;
+        padding: 1;
     }
 
     .main_title {
@@ -2108,7 +2987,7 @@ class AccountingApp(App):
 
     DataTable {
         width: 100%;
-        height: auto;
+        height: 1fr;
         border: solid $primary-darken-1;
     }
 
@@ -2141,7 +3020,7 @@ class AccountingApp(App):
     }
 
     .filter_row Select {
-        width: 15;
+        width: 25;
         margin: 0 1 0 0;
     }
 

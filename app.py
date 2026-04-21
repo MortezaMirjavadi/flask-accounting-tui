@@ -7,6 +7,8 @@ from models import (
     validate_source_payload,
     validate_transaction_payload,
     validate_user_payload,
+    validate_budget_period_payload,
+    validate_budget_item_payload,
     gregorian_to_jalali,
 )
 
@@ -824,6 +826,369 @@ def source_balance(source_id):
             "balance": total_income - total_cost,
         }
     )
+
+
+@app.route("/settings/reset", methods=["POST"])
+
+
+# ---------------------------------------------------------------------------
+# Budget Periods
+# ---------------------------------------------------------------------------
+
+def _get_budget_period(cursor, period_id, user_id):
+    cursor.execute(
+        "SELECT * FROM budget_periods WHERE id = ? AND user_id = ?",
+        (period_id, user_id),
+    )
+    return cursor.fetchone()
+
+
+def _get_budget_item(cursor, item_id, user_id):
+    cursor.execute(
+        "SELECT bi.*, bp.user_id FROM budget_items bi "
+        "JOIN budget_periods bp ON bi.budget_period_id = bp.id "
+        "WHERE bi.id = ? AND bp.user_id = ?",
+        (item_id, user_id),
+    )
+    return cursor.fetchone()
+
+
+@app.route("/budget/periods", methods=["POST"])
+def create_budget_period():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        payload = validate_budget_period_payload(data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO budget_periods (user_id, year, month) VALUES (?, ?, ?)",
+            (user_id, payload["year"], payload["month"]),
+        )
+        conn.commit()
+        new_id = cursor.lastrowid
+    except sqlite3.IntegrityError:
+        conn.close()
+        return jsonify({"error": "Budget period already exists for this year/month"}), 400
+    conn.close()
+    return jsonify({"id": new_id, "year": payload["year"], "month": payload["month"]}), 201
+
+
+@app.route("/budget/periods/<int:period_id>", methods=["GET"])
+def get_budget_period(period_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    conn = get_connection()
+    cursor = conn.cursor()
+    row = _get_budget_period(cursor, period_id, user_id)
+    conn.close()
+    if row is None:
+        return jsonify({"error": "Budget period not found"}), 404
+    return jsonify(row_to_dict(row))
+
+
+@app.route("/budget/periods", methods=["GET"])
+def list_budget_periods():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    year_filter = request.args.get("year", type=int)
+    month_filter = request.args.get("month", type=int)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = "SELECT * FROM budget_periods WHERE user_id = ?"
+    params = [user_id]
+    if year_filter is not None:
+        query += " AND year = ?"
+        params.append(year_filter)
+    if month_filter is not None:
+        query += " AND month = ?"
+        params.append(month_filter)
+    query += " ORDER BY year DESC, month DESC"
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return jsonify([row_to_dict(r) for r in rows])
+
+
+@app.route("/budget/periods/<int:period_id>", methods=["PUT"])
+def update_budget_period(period_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        payload = validate_budget_period_payload(data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    if _get_budget_period(cursor, period_id, user_id) is None:
+        conn.close()
+        return jsonify({"error": "Budget period not found"}), 404
+    try:
+        cursor.execute(
+            "UPDATE budget_periods SET year = ?, month = ? WHERE id = ? AND user_id = ?",
+            (payload["year"], payload["month"], period_id, user_id),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.close()
+        return jsonify({"error": "Budget period already exists for this year/month"}), 400
+    conn.close()
+    return jsonify({"id": period_id, "year": payload["year"], "month": payload["month"]})
+
+
+@app.route("/budget/periods/<int:period_id>", methods=["DELETE"])
+def delete_budget_period(period_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    conn = get_connection()
+    cursor = conn.cursor()
+    if _get_budget_period(cursor, period_id, user_id) is None:
+        conn.close()
+        return jsonify({"error": "Budget period not found"}), 404
+    cursor.execute("DELETE FROM budget_periods WHERE id = ?", (period_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"message": "Budget period deleted"})
+
+
+# ---------------------------------------------------------------------------
+# Budget Items
+# ---------------------------------------------------------------------------
+
+@app.route("/budget/items", methods=["POST"])
+def create_budget_item():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        payload = validate_budget_item_payload(data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    period_id = data.get("budget_period_id")
+    try:
+        period_id = int(period_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "budget_period_id is required"}), 400
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    if _get_budget_period(cursor, period_id, user_id) is None:
+        conn.close()
+        return jsonify({"error": "Budget period not found"}), 404
+
+    # Verify category belongs to user
+    cursor.execute(
+        "SELECT id FROM categories WHERE id = ? AND user_id = ?",
+        (payload["category_id"], user_id),
+    )
+    if cursor.fetchone() is None:
+        conn.close()
+        return jsonify({"error": "Category not found or does not belong to you"}), 400
+
+    try:
+        cursor.execute(
+            "INSERT INTO budget_items (budget_period_id, category_id, planned_amount, notes) VALUES (?, ?, ?, ?)",
+            (period_id, payload["category_id"], payload["planned_amount"], payload["notes"]),
+        )
+        conn.commit()
+        new_id = cursor.lastrowid
+    except sqlite3.IntegrityError:
+        conn.close()
+        return jsonify({"error": "Budget item already exists for this category in this period"}), 400
+    conn.close()
+    return jsonify({"id": new_id, "budget_period_id": period_id, **payload}), 201
+
+
+@app.route("/budget/items/<int:item_id>", methods=["GET"])
+def get_budget_item(item_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    conn = get_connection()
+    cursor = conn.cursor()
+    row = _get_budget_item(cursor, item_id, user_id)
+    conn.close()
+    if row is None:
+        return jsonify({"error": "Budget item not found"}), 404
+    return jsonify(row_to_dict(row))
+
+
+@app.route("/budget/periods/<int:period_id>/items", methods=["GET"])
+def list_budget_items(period_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    conn = get_connection()
+    cursor = conn.cursor()
+    if _get_budget_period(cursor, period_id, user_id) is None:
+        conn.close()
+        return jsonify({"error": "Budget period not found"}), 404
+    cursor.execute(
+        "SELECT bi.*, c.name as category_name, c.type as category_type "
+        "FROM budget_items bi "
+        "JOIN categories c ON bi.category_id = c.id "
+        "WHERE bi.budget_period_id = ?",
+        (period_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return jsonify([row_to_dict(r) for r in rows])
+
+
+@app.route("/budget/items/<int:item_id>", methods=["PUT"])
+def update_budget_item(item_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        payload = validate_budget_item_payload(data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    row = _get_budget_item(cursor, item_id, user_id)
+    if row is None:
+        conn.close()
+        return jsonify({"error": "Budget item not found"}), 404
+
+    # Verify category belongs to user
+    cursor.execute(
+        "SELECT id FROM categories WHERE id = ? AND user_id = ?",
+        (payload["category_id"], user_id),
+    )
+    if cursor.fetchone() is None:
+        conn.close()
+        return jsonify({"error": "Category not found or does not belong to you"}), 400
+
+    try:
+        cursor.execute(
+            "UPDATE budget_items SET category_id = ?, planned_amount = ?, notes = ? WHERE id = ?",
+            (payload["category_id"], payload["planned_amount"], payload["notes"], item_id),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.close()
+        return jsonify({"error": "Budget item already exists for this category in this period"}), 400
+    conn.close()
+    return jsonify({"id": item_id, **payload})
+
+
+@app.route("/budget/items/<int:item_id>", methods=["DELETE"])
+def delete_budget_item(item_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    conn = get_connection()
+    cursor = conn.cursor()
+    if _get_budget_item(cursor, item_id, user_id) is None:
+        conn.close()
+        return jsonify({"error": "Budget item not found"}), 404
+    cursor.execute("DELETE FROM budget_items WHERE id = ?", (item_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"message": "Budget item deleted"})
+
+
+# ---------------------------------------------------------------------------
+# Budget Report
+# ---------------------------------------------------------------------------
+
+@app.route("/budget/report", methods=["GET"])
+def budget_report():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    year = request.args.get("year", type=int)
+    month = request.args.get("month", type=int)
+    if year is None or month is None:
+        return jsonify({"error": "year and month query parameters are required"}), 400
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Find the budget period
+    cursor.execute(
+        "SELECT * FROM budget_periods WHERE user_id = ? AND year = ? AND month = ?",
+        (user_id, year, month),
+    )
+    period = cursor.fetchone()
+    if period is None:
+        conn.close()
+        return jsonify({"error": "No budget period found for this year/month"}), 404
+
+    period_id = period["id"]
+
+    # Get all budget items for this period with category info
+    cursor.execute(
+        "SELECT bi.*, c.name as category_name "
+        "FROM budget_items bi "
+        "JOIN categories c ON bi.category_id = c.id "
+        "WHERE bi.budget_period_id = ?",
+        (period_id,),
+    )
+    items = cursor.fetchall()
+
+    # For each category, get total spent in that month
+    # We need to match Jalali month/year to Gregorian date ranges
+    import jdatetime as _jd
+    try:
+        first_day = _jd.date(year, month, 1)
+        last_day_num = _jd.date(year, month % 12 + 1, 1).togregorian() - __import__("datetime").timedelta(days=1) if month < 12 else _jd.date(year + 1, 1, 1).togregorian() - __import__("datetime").timedelta(days=1)
+        greg_start = first_day.togregorian().strftime("%Y-%m-%d")
+        greg_end = last_day_num.strftime("%Y-%m-%d")
+    except Exception:
+        conn.close()
+        return jsonify({"error": "Invalid date"}), 400
+
+    categories_report = []
+    total_planned = 0
+    total_spent = 0
+
+    for item in items:
+        cat_id = item["category_id"]
+        cursor.execute(
+            "SELECT COALESCE(SUM(amount), 0) as total FROM transactions "
+            "WHERE user_id = ? AND category_id = ? AND date >= ? AND date <= ?",
+            (user_id, cat_id, greg_start, greg_end),
+        )
+        spent_row = cursor.fetchone()
+        spent = spent_row["total"] if spent_row else 0
+        remaining = item["planned_amount"] - spent
+        categories_report.append({
+            "category_id": cat_id,
+            "category_name": item["category_name"],
+            "planned_amount": item["planned_amount"],
+            "total_spent": spent,
+            "remaining_amount": remaining,
+        })
+        total_planned += item["planned_amount"]
+        total_spent += spent
+
+    conn.close()
+    return jsonify({
+        "period": row_to_dict(period),
+        "categories": categories_report,
+        "total_planned": total_planned,
+        "total_spent": total_spent,
+        "total_remaining": total_planned - total_spent,
+    })
 
 
 @app.route("/settings/reset", methods=["POST"])

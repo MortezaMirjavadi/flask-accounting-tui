@@ -99,3 +99,40 @@ def validate_user_payload(data: dict) -> dict:
     if len(password) < 4:
         raise ValueError("Password must be at least 4 characters")
     return {"username": username, "password": password}
+
+
+def validate_budget_period_payload(data: dict) -> dict:
+    year = data.get("year")
+    month = data.get("month")
+    try:
+        year = int(year)
+    except (TypeError, ValueError):
+        raise ValueError("Year must be an integer")
+    if year < 1300:
+        raise ValueError("Year must be >= 1300")
+    try:
+        month = int(month)
+    except (TypeError, ValueError):
+        raise ValueError("Month must be an integer")
+    if month < 1 or month > 12:
+        raise ValueError("Month must be 1-12")
+    return {"year": year, "month": month}
+
+
+def validate_budget_item_payload(data: dict) -> dict:
+    category_id = data.get("category_id")
+    planned_amount = data.get("planned_amount")
+    notes = (data.get("notes") or "").strip()
+    # notes_value = data.get("notes", "")
+    # notes = notes_value.strip() if notes_value else ""
+    try:
+        category_id = int(category_id)
+    except (TypeError, ValueError):
+        raise ValueError("category_id must be an integer")
+    try:
+        planned_amount = float(planned_amount)
+        if planned_amount <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ValueError("Planned amount must be positive")
+    return {"category_id": category_id, "planned_amount": planned_amount, "notes": notes}
