@@ -69,6 +69,14 @@ def api_delete(path, username=None):
         return None
 
 
+def format_toman(amount):
+    """Format a number as Toman (Persian currency)."""
+    try:
+        return f"{float(amount):,.0f} Toman"
+    except (TypeError, ValueError):
+        return "0 Toman"
+
+
 def handle_response(resp):
     if resp is None:
         return None, "Network error"
@@ -718,7 +726,7 @@ class SourceListScreen(Screen):
             table.add_row("-", "No sources found")
         else:
             for s in self._data:
-                table.add_row(str(s["id"]), s["name"], f"{s['amount']:,.2f}")
+                table.add_row(str(s["id"]), s["name"], format_toman(s["amount"]))
         self.update_detail()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -772,7 +780,7 @@ class SourceListScreen(Screen):
             bal_info = "Balance: N/A"
         else:
             bal = bal_data.get("balance", 0)
-            bal_info = f"Balance: {bal:,.2f}"
+            bal_info = f"Balance: {format_toman(bal)}"
         detail.update(
             f"[b]ID:[/b]        {src['id']}\n"
             f"[b]Name:[/b]      {src['name']}\n"
@@ -1016,8 +1024,8 @@ class TransactionListScreen(Screen):
             yield Label("TRANSACTION LIST", classes="menu_header")
             yield Rule()
             with Horizontal(classes="filter_row"):
-                yield Input(placeholder="Date from (YYYY-MM-DD)", id="tx_filter_from")
-                yield Input(placeholder="Date to (YYYY-MM-DD)", id="tx_filter_to")
+                yield Input(placeholder="Date from (1405-01-01)", id="tx_filter_from")
+                yield Input(placeholder="Date to (1405-12-29)", id="tx_filter_to")
                 yield Input(placeholder="Min amount", id="tx_filter_min")
                 yield Input(placeholder="Max amount", id="tx_filter_max")
                 yield Input(placeholder="Description", id="tx_filter_desc")
@@ -1057,7 +1065,7 @@ class TransactionListScreen(Screen):
                 table.add_row(
                     str(t["id"]),
                     t.get("date", ""),
-                    str(t.get("amount", "")),
+                    format_toman(t.get("amount", 0)),
                     t.get("category_name", "N/A"),
                     t.get("source_name") or "-",
                     (t.get("description") or "")[:25],
@@ -1119,7 +1127,7 @@ class TransactionListScreen(Screen):
         detail.update(
             f"[b]ID:[/b]          {tx['id']}\n"
             f"[b]Date:[/b]        {tx.get('date', '')}\n"
-            f"[b]Amount:[/b]      {tx.get('amount', 0):,.2f}\n"
+            f"[b]Amount:[/b]      {format_toman(tx.get('amount', 0))}\n"
             f"[b]Category:[/b]    {tx.get('category_name', 'N/A')}\n"
             f"[b]Source:[/b]      {tx.get('source_name') or '-'}\n"
             f"[b]Description:[/b] {tx.get('description') or '-'}\n"
@@ -1241,7 +1249,7 @@ class TransactionByCategoryScreen(Screen):
             arrow = "▼" if cat_id in self._expanded else "▶"
             color = "green" if cat_type == "income" else "red"
 
-            lines.append(f"{marker} {arrow} [{color}]{cat_name}[/{color}] ({cat_type})  {len(cat_txs)} txs  Total: {total:,.2f}")
+            lines.append(f"{marker} {arrow} [{color}]{cat_name}[/{color}] ({cat_type})  {len(cat_txs)} txs  Total: {format_toman(total)}")
 
             if cat_id in self._expanded:
                 if not cat_txs:
@@ -1255,7 +1263,7 @@ class TransactionByCategoryScreen(Screen):
                         )
                         tx_marker = ">" if tx_selected else " "
                         lines.append(
-                            f"   {tx_marker}  {t.get('date','')}  {t.get('amount',0):>12,.2f}  "
+                            f"   {tx_marker}  {t.get('date','')}  {format_toman(t.get('amount',0)):>20}  "
                             f"{(t.get('source_name') or '-'):<12}  {(t.get('description') or '-')[:30]}"
                         )
             lines.append("")
@@ -1697,9 +1705,9 @@ class SummaryScreen(Screen):
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
-        table.add_row("Total Income", f"{data.get('total_income', 0):,.2f}")
-        table.add_row("Total Cost", f"{data.get('total_cost', 0):,.2f}")
-        table.add_row("Balance", f"{data.get('balance', 0):,.2f}")
+        table.add_row("Total Income", format_toman(data.get("total_income", 0)))
+        table.add_row("Total Cost", format_toman(data.get("total_cost", 0)))
+        table.add_row("Balance", format_toman(data.get("balance", 0)))
 
     def action_go_back(self):
         self.app.pop_screen()
@@ -1740,7 +1748,7 @@ class CategoryReportScreen(Screen):
                 table.add_row(
                     r.get("category_name", ""),
                     r.get("category_type", ""),
-                    f"{r.get('total', 0):,.2f}",
+                    format_toman(r.get("total", 0)),
                 )
 
     def action_go_back(self):
@@ -1783,9 +1791,9 @@ class MonthlyReportScreen(Screen):
                 cost = r.get("total_cost", 0)
                 table.add_row(
                     r.get("month", ""),
-                    f"{income:,.2f}",
-                    f"{cost:,.2f}",
-                    f"{income - cost:,.2f}",
+                    format_toman(income),
+                    format_toman(cost),
+                    format_toman(income - cost),
                 )
 
     def action_go_back(self):
@@ -1819,14 +1827,14 @@ class BarChartScreen(Screen):
             max_val = 1
         max_label = max(len(l) for l in labels) if labels else 1
         lines = []
-        lines.append(f"{'Category':<{max_label}} | {'Amount':>12} | Chart")
-        lines.append("-" * (max_label + 30))
+        lines.append(f"{'Category':<{max_label}} | {'Amount':>20} | Chart")
+        lines.append("-" * (max_label + 38))
         for label, val, row in zip(labels, values, data):
             bar_len = int((val / max_val) * 30)
             color = "green" if row["category_type"] == "income" else "red"
             bar = "█" * bar_len
-            lines.append(f"{label:<{max_label}} | {val:>12,.0f} | [{color}]{bar}[/{color}]")
-        lines.append("-" * (max_label + 30))
+            lines.append(f"{label:<{max_label}} | {format_toman(val):>20} | [{color}]{bar}[/{color}]")
+        lines.append("-" * (max_label + 38))
         return "\n".join(lines)
 
     def load_chart(self):

@@ -616,20 +616,40 @@ def report_by_month():
     cursor.execute(
         """
         SELECT
-            strftime('%Y-%m', date) AS month,
+            date AS raw_date,
             COALESCE(SUM(CASE WHEN c.type = 'income' THEN t.amount ELSE 0 END), 0) AS total_income,
             COALESCE(SUM(CASE WHEN c.type = 'cost' THEN t.amount ELSE 0 END), 0) AS total_cost
         FROM transactions t
         LEFT JOIN categories c ON t.category_id = c.id
         WHERE t.user_id = ?
-        GROUP BY month
-        ORDER BY month
+        GROUP BY raw_date
+        ORDER BY raw_date
         """,
         (user_id,),
     )
     rows = cursor.fetchall()
     conn.close()
-    return jsonify([row_to_dict(r) for r in rows])
+
+    # Aggregate by Jalali month
+    from collections import defaultdict
+    import datetime
+
+    monthly = defaultdict(lambda: {"total_income": 0, "total_cost": 0})
+    for r in rows:
+        jalali = gregorian_to_jalali(r["raw_date"])
+        jalali_month = jalali[:7]  # YYYY-MM
+        monthly[jalali_month]["total_income"] += r["total_income"] or 0
+        monthly[jalali_month]["total_cost"] += r["total_cost"] or 0
+
+    results = []
+    for month in sorted(monthly.keys()):
+        results.append({
+            "month": month,
+            "total_income": monthly[month]["total_income"],
+            "total_cost": monthly[month]["total_cost"],
+            "balance": monthly[month]["total_income"] - monthly[month]["total_cost"],
+        })
+    return jsonify(results)
 
 
 @app.route("/transactions/report/category-chart", methods=["GET"])
