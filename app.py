@@ -717,5 +717,20 @@ def source_balance(source_id):
     )
 
 
+@app.route("/settings/reset", methods=["POST"])
+def reset_all_data():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM transactions WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM sources WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM categories WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"message": "All data reset successfully"})
+
+
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=True)

@@ -248,6 +248,7 @@ class MainMenuScreen(Screen):
         Binding("2", "go_sources", "Sources"),
         Binding("3", "go_transactions", "Transactions"),
         Binding("4", "go_reports", "Reports"),
+        Binding("5", "go_settings", "Settings"),
         Binding("l", "logout", "Logout"),
     ]
 
@@ -267,15 +268,16 @@ class MainMenuScreen(Screen):
                 ListItem(Label("2. Sources")),
                 ListItem(Label("3. Transactions")),
                 ListItem(Label("4. Reports")),
-                ListItem(Label("5. Logout")),
-                ListItem(Label("6. Exit")),
+                ListItem(Label("5. Settings")),
+                ListItem(Label("6. Logout")),
+                ListItem(Label("7. Exit")),
                 id="main_menu_list",
             )
         with Vertical(classes="bottom_bar"):
             now = datetime.now()
             jalali_now = jdatetime.datetime.fromgregorian(datetime=now)
             shamsi_str = jalali_now.strftime("%Y-%m-%d")
-            yield HelpTip(f"Date: [{shamsi_str}]  [↑/↓] Navigate  [Enter] Select  [1-4] Quick select  [L] Logout  [Q] Exit", id="help")
+            yield HelpTip(f"Date: [{shamsi_str}]  [↑/↓] Navigate  [Enter] Select  [1-5] Quick select  [L] Logout  [Q] Exit", id="help")
             yield StatusBar("Enter=Select  Esc=Back  L=Logout  Q=Quit", id="status")
         yield Footer()
 
@@ -290,8 +292,10 @@ class MainMenuScreen(Screen):
         elif idx == 3:
             self.app.push_screen(ReportsScreen())
         elif idx == 4:
-            self.action_logout()
+            self.app.push_screen(SettingsScreen())
         elif idx == 5:
+            self.action_logout()
+        elif idx == 6:
             self.app.action_quit()
 
     def action_go_categories(self):
@@ -305,6 +309,9 @@ class MainMenuScreen(Screen):
 
     def action_go_reports(self):
         self.app.push_screen(ReportsScreen())
+
+    def action_go_settings(self):
+        self.app.push_screen(SettingsScreen())
 
     def action_logout(self):
         self.app.user = None
@@ -1939,6 +1946,61 @@ class PieChartScreen(Screen):
         values = [r["total"] for r in data]
         chart_str = self._ascii_pie(labels, values)
         content.update(chart_str)
+
+    def action_go_back(self):
+        self.app.pop_screen()
+
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+
+class SettingsScreen(Screen):
+    BINDINGS = [
+        Binding("escape", "go_back", "Back"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Container(classes="main_panel"):
+            yield Label("SETTINGS", classes="menu_header")
+            yield Rule()
+            yield ListView(
+                ListItem(Label("1. Reset All Data")),
+                ListItem(Label("2. Back")),
+                id="settings_list",
+            )
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[↑/↓] Navigate  [Enter] Select  [Esc] Back", id="help")
+            yield StatusBar("Enter=Select  Esc=Back", id="status")
+        yield Footer()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        idx = event.list_view.index
+        if idx == 0:
+            self.action_reset_data()
+        elif idx == 1:
+            self.action_go_back()
+
+    def action_reset_data(self):
+        def on_confirm(confirmed: bool):
+            if confirmed:
+                self._do_reset()
+        self.app.push_screen(
+            ConfirmBox(
+                "This will permanently delete ALL your categories, sources, and transactions.\nThis action cannot be undone.",
+                "Reset All Data?",
+            ),
+            on_confirm,
+        )
+
+    def _do_reset(self):
+        resp = api_post("/settings/reset", {}, username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        if err:
+            self.app.push_screen(MessageBox(err, "Error"))
+        else:
+            self.app.push_screen(MessageBox("All data has been reset successfully.", "Success"))
 
     def action_go_back(self):
         self.app.pop_screen()
