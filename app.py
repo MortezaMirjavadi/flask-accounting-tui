@@ -330,8 +330,8 @@ def update_source(source_id):
         return jsonify({"error": "Source not found"}), 404
     try:
         cursor.execute(
-            "UPDATE sources SET name = ? WHERE id = ? AND user_id = ?",
-            (payload["name"], source_id, user_id),
+            "UPDATE sources SET name = ?, amount = ? WHERE id = ? AND user_id = ?",
+            (payload["name"], payload["amount"], source_id, user_id),
         )
         conn.commit()
     except sqlite3.IntegrityError as exc:
@@ -421,6 +421,27 @@ def list_transactions():
     return jsonify(results)
 
 
+def _get_category_type(cursor, category_id, user_id):
+    """Return 'income', 'cost', or None if category not found."""
+    cursor.execute(
+        "SELECT type FROM categories WHERE id = ? AND user_id = ?",
+        (category_id, user_id),
+    )
+    row = cursor.fetchone()
+    return row["type"] if row else None
+
+
+def _adjust_source_amount(cursor, source_id, user_id, amount, category_type):
+    """Increment source for income, decrement for cost."""
+    if source_id is None or category_type not in ("income", "cost"):
+        return
+    delta = amount if category_type == "income" else -amount
+    cursor.execute(
+        "UPDATE sources SET amount = amount + ? WHERE id = ? AND user_id = ?",
+        (delta, source_id, user_id),
+    )
+
+
 @app.route("/transactions", methods=["POST"])
 def create_transaction():
     user_id, err = get_user_id_from_request()
@@ -434,6 +455,12 @@ def create_transaction():
 
     conn = get_connection()
     cursor = conn.cursor()
+
+    cat_type = _get_category_type(cursor, payload["category_id"], user_id)
+    if cat_type is None:
+        conn.close()
+        return jsonify({"error": "Category not found"}), 404
+
     cursor.execute(
         """
         INSERT INTO transactions (user_id, date, amount, category_id, source_id, description)
@@ -447,6 +474,9 @@ def create_transaction():
             payload.get("source_id"),
             payload["description"],
         ),
+    )
+    _adjust_source_amount(
+        cursor, payload.get("source_id"), user_id, payload["amount"], cat_type
     )
     conn.commit()
     new_id = cursor.lastrowid
@@ -502,11 +532,27 @@ def update_transaction(tx_id):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id FROM transactions WHERE id = ? AND user_id = ?", (tx_id, user_id)
+        "SELECT amount, category_id, source_id FROM transactions WHERE id = ? AND user_id = ?",
+        (tx_id, user_id),
     )
-    if cursor.fetchone() is None:
+    old = cursor.fetchone()
+    if old is None:
         conn.close()
         return jsonify({"error": "Transaction not found"}), 404
+
+    # Reverse old effect
+    old_type = _get_category_type(cursor, old["category_id"], user_id)
+    if old_type:
+        _adjust_source_amount(
+            cursor, old["source_id"], user_id, old["amount"], "cost" if old_type == "income" else "income"
+        )
+
+    # Apply new effect
+    new_type = _get_category_type(cursor, payload["category_id"], user_id)
+    if new_type is None:
+        conn.close()
+        return jsonify({"error": "Category not found"}), 404
+
     cursor.execute(
         """
         UPDATE transactions
@@ -523,6 +569,9 @@ def update_transaction(tx_id):
             user_id,
         ),
     )
+    _adjust_source_amount(
+        cursor, payload.get("source_id"), user_id, payload["amount"], new_type
+    )
     conn.commit()
     conn.close()
     return jsonify(
@@ -538,11 +587,21 @@ def delete_transaction(tx_id):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id FROM transactions WHERE id = ? AND user_id = ?", (tx_id, user_id)
+        "SELECT amount, category_id, source_id FROM transactions WHERE id = ? AND user_id = ?",
+        (tx_id, user_id),
     )
-    if cursor.fetchone() is None:
+    old = cursor.fetchone()
+    if old is None:
         conn.close()
         return jsonify({"error": "Transaction not found"}), 404
+
+    # Reverse the effect on source
+    old_type = _get_category_type(cursor, old["category_id"], user_id)
+    if old_type:
+        _adjust_source_amount(
+            cursor, old["source_id"], user_id, old["amount"], "cost" if old_type == "income" else "income"
+        )
+
     cursor.execute("DELETE FROM transactions WHERE id = ?", (tx_id,))
     conn.commit()
     conn.close()
@@ -726,6 +785,7 @@ def reset_all_data():
     cursor = conn.cursor()
     cursor.execute("DELETE FROM transactions WHERE user_id = ?", (user_id,))
     cursor.execute("DELETE FROM sources WHERE user_id = ?", (user_id,))
+    # cursor.execute("UPDATE sources SET amount = 0 WHERE user_id = ?", (user_id,))
     cursor.execute("DELETE FROM categories WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()

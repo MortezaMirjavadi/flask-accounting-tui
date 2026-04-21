@@ -695,7 +695,7 @@ class SourceListScreen(Screen):
         yield Header()
         with Container(classes="wide_panel"):
             yield Label("SOURCE LIST", classes="menu_header")
-            yield Static("-" * 70, classes="separator")
+            yield Rule()
             with Horizontal(classes="filter_row"):
                 yield Input(placeholder="Filter by name", id="src_filter_name")
                 yield Input(placeholder="Min amount", id="src_filter_min")
@@ -707,7 +707,7 @@ class SourceListScreen(Screen):
                     yield DataTable(id="src_table")
                 with Vertical(classes="right_pane"):
                     yield Label("DETAILS", classes="detail_header")
-                    yield Static("-" * 25, classes="separator")
+                    yield Rule()
                     yield Static(id="src_detail")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [F] Filter  [R] Reset  [Esc] Back", id="help")
@@ -921,6 +921,8 @@ class SourceEditScreen(Screen):
             yield Static("-" * 50, classes="separator")
             yield Label("Name:")
             yield Input(placeholder="Source name", id="src_name")
+            yield Label("Amount:")
+            yield Input(placeholder="10000", id="src_amount")
             yield Static("")
             with Horizontal(classes="button_row"):
                 yield Button("Save", variant="primary", id="save")
@@ -950,10 +952,23 @@ class SourceEditScreen(Screen):
 
     def save(self):
         name = self.query_one("#src_name", Input).value.strip()
+        amount_str = self.query_one("#src_amount", Input).value.strip()
         if not name:
             self.app.push_screen(MessageBox("Name is required", "Validation"))
             return
-        resp = api_put(f"/sources/{self.src_id}", {"name": name}, username=self.app.user.get("username"))
+        if not amount_str:
+            self.app.push_screen(MessageBox("Amount is required", "Validation"))
+            return
+        try:
+            amount = float(amount_str)
+        except ValueError:
+            self.app.push_screen(MessageBox("Invalid amount", "Validation"))
+            return
+        payload = {
+            "name": name,
+            "amount": amount,
+        }
+        resp = api_put(f"/sources/{self.src_id}", payload, username=self.app.user.get("username"))
         _, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
