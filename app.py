@@ -431,6 +431,16 @@ def _get_category_type(cursor, category_id, user_id):
     return row["type"] if row else None
 
 
+def _get_source_amount(cursor, source_id, user_id):
+    """Return current source amount or None if source not found."""
+    cursor.execute(
+        "SELECT amount FROM sources WHERE id = ? AND user_id = ?",
+        (source_id, user_id),
+    )
+    row = cursor.fetchone()
+    return row["amount"] if row else None
+
+
 def _adjust_source_amount(cursor, source_id, user_id, amount, category_type):
     """Increment source for income, decrement for cost."""
     if source_id is None or category_type not in ("income", "cost"):
@@ -461,6 +471,26 @@ def create_transaction():
         conn.close()
         return jsonify({"error": "Category not found"}), 404
 
+    # Check sufficient balance for cost transactions
+    source_id = payload.get("source_id")
+    if cat_type == "cost" and source_id is not None:
+        current = _get_source_amount(cursor, source_id, user_id)
+        if current is None:
+            conn.close()
+            return jsonify({"error": "Source not found"}), 404
+        if current < payload["amount"]:
+            conn.close()
+            return (
+                jsonify(
+                    {
+                        "error": "Insufficient source balance",
+                        "source_amount": current,
+                        "requested": payload["amount"],
+                    }
+                ),
+                400,
+            )
+
     cursor.execute(
         """
         INSERT INTO transactions (user_id, date, amount, category_id, source_id, description)
@@ -471,13 +501,11 @@ def create_transaction():
             payload["date"],
             payload["amount"],
             payload["category_id"],
-            payload.get("source_id"),
+            source_id,
             payload["description"],
         ),
     )
-    _adjust_source_amount(
-        cursor, payload.get("source_id"), user_id, payload["amount"], cat_type
-    )
+    _adjust_source_amount(cursor, source_id, user_id, payload["amount"], cat_type)
     conn.commit()
     new_id = cursor.lastrowid
     conn.close()
@@ -553,6 +581,30 @@ def update_transaction(tx_id):
         conn.close()
         return jsonify({"error": "Category not found"}), 404
 
+    # Check sufficient balance for cost transactions
+    new_source_id = payload.get("source_id")
+    if new_type == "cost" and new_source_id is not None:
+        current = _get_source_amount(cursor, new_source_id, user_id)
+        if current is None:
+            conn.close()
+            return jsonify({"error": "Source not found"}), 404
+        # Account for the reversed old effect if same source
+        effective = current
+        if old["source_id"] == new_source_id and old_type:
+            effective += old["amount"] if old_type == "cost" else -old["amount"]
+        if effective < payload["amount"]:
+            conn.close()
+            return (
+                jsonify(
+                    {
+                        "error": "Insufficient source balance",
+                        "source_amount": effective,
+                        "requested": payload["amount"],
+                    }
+                ),
+                400,
+            )
+
     cursor.execute(
         """
         UPDATE transactions
@@ -563,15 +615,13 @@ def update_transaction(tx_id):
             payload["date"],
             payload["amount"],
             payload["category_id"],
-            payload.get("source_id"),
+            new_source_id,
             payload["description"],
             tx_id,
             user_id,
         ),
     )
-    _adjust_source_amount(
-        cursor, payload.get("source_id"), user_id, payload["amount"], new_type
-    )
+    _adjust_source_amount(cursor, new_source_id, user_id, payload["amount"], new_type)
     conn.commit()
     conn.close()
     return jsonify(

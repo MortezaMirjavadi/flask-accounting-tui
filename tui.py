@@ -130,16 +130,17 @@ class MessageBox(ModalScreen):
         Binding("enter", "dismiss", "Close"),
     ]
 
-    def __init__(self, message, title="Message", **kwargs):
+    def __init__(self, message, title="Message", is_error=False, **kwargs):
         self.message_text = message
         self.title_text = title
+        self.is_error = is_error
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
         with Container(classes="dialog"):
-            yield Label(self.title_text, classes="dialog_title")
-            yield Static(self.message_text, classes="dialog_message")
-            yield Button("OK", variant="primary", id="ok")
+            yield Label(self.title_text, classes="dialog_title error_title" if self.is_error else "dialog_title")
+            yield Static(self.message_text, classes="dialog_message error_message" if self.is_error else "dialog_message")
+            yield Button("OK", variant="error" if self.is_error else "primary", id="ok")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss()
@@ -2189,6 +2190,15 @@ class AccountingApp(App):
     .dialog_message {
         text-align: center;
         margin: 1 0;
+    }
+
+    .error_title {
+        color: $error;
+    }
+
+    .error_message {
+        color: $error;
+        text-style: bold;
     }
 
     .dialog_buttons {
