@@ -416,7 +416,7 @@ class CategoryListScreen(Screen):
         yield Header()
         with Container(classes="wide_panel"):
             yield Label("CATEGORY LIST", classes="menu_header")
-            yield Static("-" * 70, classes="separator")
+            yield Rule()
             with Horizontal(classes="filter_row"):
                 yield Input(placeholder="Filter by name", id="cat_filter_name")
                 yield Select(
@@ -442,6 +442,7 @@ class CategoryListScreen(Screen):
         table = self.query_one("#cat_table", DataTable)
         table.add_columns("ID", "Name", "Type")
         table.cursor_type = "row"
+        table.zebra_stripes = True
         self.load_data()
 
     def load_data(self, params=None):
@@ -602,7 +603,8 @@ class CategoryAddScreen(Screen):
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
         else:
-            self.app.push_screen(MessageBox("Category added successfully.", "Success"))
+            self.dismiss(True)
+            self.notify("Create category successfully")
             self.query_one("#cat_name", Input).value = ""
 
 
@@ -755,6 +757,7 @@ class SourceListScreen(Screen):
         table = self.query_one("#src_table", DataTable)
         table.add_columns("ID", "Name", "Amount")
         table.cursor_type = "row"
+        table.zebra_stripes = True
         self.load_data()
 
     def load_data(self, params=None):
@@ -1095,7 +1098,7 @@ class TransactionListScreen(Screen):
                     yield DataTable(id="tx_table")
                 with Vertical(classes="right_pane"):
                     yield Label("DETAILS", classes="detail_header")
-                    yield Static("-" * 25, classes="separator")
+                    yield Rule()
                     yield Static(id="tx_detail")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [F] Filter  [R] Reset  [Esc] Back", id="help")
@@ -1106,6 +1109,7 @@ class TransactionListScreen(Screen):
         table = self.query_one("#tx_table", DataTable)
         table.add_columns("ID", "Date", "Amount", "Category", "Source", "Description")
         table.cursor_type = "row"
+        table.zebra_stripes = True
         self.load_data()
 
     def load_data(self, params=None):
@@ -1772,6 +1776,7 @@ class SummaryScreen(Screen):
         table = self.query_one("#sum_table", DataTable)
         table.add_columns("Item", "Value")
         table.cursor_type = "row"
+        table.zebra_stripes = True
         self.load_data()
 
     def load_data(self):
@@ -1808,6 +1813,7 @@ class CategoryReportScreen(Screen):
         table = self.query_one("#rep_table", DataTable)
         table.add_columns("Category", "Type", "Total")
         table.cursor_type = "row"
+        table.zebra_stripes = True
         self.load_data()
 
     def load_data(self):
@@ -1850,6 +1856,7 @@ class MonthlyReportScreen(Screen):
         table = self.query_one("#mon_table", DataTable)
         table.add_columns("Month", "Income", "Cost", "Balance")
         table.cursor_type = "row"
+        table.zebra_stripes = True
         self.load_data()
 
     def load_data(self):
@@ -1872,6 +1879,7 @@ class MonthlyReportScreen(Screen):
                     format_toman(cost),
                     format_toman(income - cost),
                 )
+        table.zebra_stripes = True
 
     def action_go_back(self):
         self.app.pop_screen()
@@ -2198,6 +2206,7 @@ class BudgetPeriodListScreen(Screen):
         table = self.query_one("#periods_table", DataTable)
         table.add_columns("ID", "Year", "Month", "Items")
         table.cursor_type = "row"
+        table.zebra_stripes = True
         self.load_periods()
 
     def load_periods(self):
@@ -2229,6 +2238,7 @@ class BudgetPeriodListScreen(Screen):
             if not hasattr(table, '_month_map'):
                 table._month_map = {}
             table._month_map[str(period["id"])] = period["month"]
+        table.zebra_stripes = True
         status.update(f"Loaded {len(data)} period(s). [A] Add  [E] Edit  [D] Delete  [I] Items")
 
     def action_add_period(self):
@@ -2469,6 +2479,7 @@ class BudgetItemListScreen(Screen):
         table = self.query_one("#items_table", DataTable)
         table.add_columns("ID", "Category", "Planned Amount", "Notes")
         table.cursor_type = "row"
+        table.zebra_stripes = True
         self.load_items()
 
     def load_items(self):
@@ -2756,6 +2767,8 @@ class BudgetReportScreen(Screen):
         table = self.query_one("#report_table", DataTable)
         table.add_columns("Category", "Planned", "Spent", "Remaining", "Status")
         table.cursor_type = "row"
+        table.zebra_stripes = True
+        table.show_cursor = True
         # Pre-fill with current Jalali date
         now = datetime.now()
         jalali_now = jdatetime.datetime.fromgregorian(datetime=now)
@@ -2989,6 +3002,11 @@ class AccountingApp(App):
         width: 100%;
         height: 1fr;
         border: solid $primary-darken-1;
+    }
+
+    DataTable > .datatable--header {
+        background: $boost;
+        text-style: bold;
     }
 
     Input {
