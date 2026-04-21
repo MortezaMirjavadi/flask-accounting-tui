@@ -116,9 +116,20 @@ def list_categories():
     user_id, err = get_user_id_from_request()
     if err:
         return err
+    name_filter = request.args.get("name", "").strip()
+    type_filter = request.args.get("type", "").strip()
+
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM categories WHERE user_id = ?", (user_id,))
+    query = "SELECT * FROM categories WHERE user_id = ?"
+    params = [user_id]
+    if name_filter:
+        query += " AND name LIKE ?"
+        params.append(f"%{name_filter}%")
+    if type_filter:
+        query += " AND type = ?"
+        params.append(type_filter)
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return jsonify([row_to_dict(r) for r in rows])
@@ -228,9 +239,24 @@ def list_sources():
     user_id, err = get_user_id_from_request()
     if err:
         return err
+    name_filter = request.args.get("name", "").strip()
+    min_amount = request.args.get("min_amount", type=float)
+    max_amount = request.args.get("max_amount", type=float)
+
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM sources WHERE user_id = ?", (user_id,))
+    query = "SELECT * FROM sources WHERE user_id = ?"
+    params = [user_id]
+    if name_filter:
+        query += " AND name LIKE ?"
+        params.append(f"%{name_filter}%")
+    if min_amount is not None:
+        query += " AND amount >= ?"
+        params.append(min_amount)
+    if max_amount is not None:
+        query += " AND amount <= ?"
+        params.append(max_amount)
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return jsonify([row_to_dict(r) for r in rows])
@@ -345,6 +371,12 @@ def list_transactions():
         return err
     category_id = request.args.get("category_id", type=int)
     source_id = request.args.get("source_id", type=int)
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    min_amount = request.args.get("min_amount", type=float)
+    max_amount = request.args.get("max_amount", type=float)
+    description = request.args.get("description", "").strip()
+
     conn = get_connection()
     cursor = conn.cursor()
     query = (
@@ -361,6 +393,21 @@ def list_transactions():
     if source_id is not None:
         query += " AND t.source_id = ?"
         params.append(source_id)
+    if date_from:
+        query += " AND t.date >= ?"
+        params.append(date_from)
+    if date_to:
+        query += " AND t.date <= ?"
+        params.append(date_to)
+    if min_amount is not None:
+        query += " AND t.amount >= ?"
+        params.append(min_amount)
+    if max_amount is not None:
+        query += " AND t.amount <= ?"
+        params.append(max_amount)
+    if description:
+        query += " AND t.description LIKE ?"
+        params.append(f"%{description}%")
     query += " ORDER BY t.date DESC"
     cursor.execute(query, params)
     rows = cursor.fetchall()

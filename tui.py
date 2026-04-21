@@ -17,6 +17,7 @@ from textual.widgets import (
     Input,
     Label,
     ListItem,
+    Rule,
     ListView,
     Select,
     Static,
@@ -266,7 +267,7 @@ class MainMenuScreen(Screen):
             now = datetime.now()
             jalali_now = jdatetime.datetime.fromgregorian(datetime=now)
             shamsi_str = jalali_now.strftime("%Y-%m-%d")
-            yield HelpTip(f"[{shamsi_str}]  [↑/↓] Navigate  [Enter] Select  [1-4] Quick select  [L] Logout  [Q] Exit", id="help")
+            yield HelpTip(f"Date: [{shamsi_str}]  [↑/↓] Navigate  [Enter] Select  [1-4] Quick select  [L] Logout  [Q] Exit", id="help")
             yield StatusBar("Enter=Select  Esc=Back  L=Logout  Q=Quit", id="status")
         yield Footer()
 
@@ -355,6 +356,8 @@ class CategoryListScreen(Screen):
         Binding("escape", "go_back", "Back"),
         Binding("e", "edit_selected", "Edit"),
         Binding("d", "delete_selected", "Delete"),
+        Binding("f", "apply_filter", "Filter"),
+        Binding("r", "reset_filter", "Reset"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -362,6 +365,15 @@ class CategoryListScreen(Screen):
         with Container(classes="wide_panel"):
             yield Label("CATEGORY LIST", classes="menu_header")
             yield Static("-" * 70, classes="separator")
+            with Horizontal(classes="filter_row"):
+                yield Input(placeholder="Filter by name", id="cat_filter_name")
+                yield Select(
+                    [("All Types", ""), ("Income", "income"), ("Cost", "cost")],
+                    prompt="Filter by type",
+                    id="cat_filter_type",
+                )
+                yield Button("Filter", variant="primary", id="cat_filter_btn")
+                yield Button("Reset", variant="default", id="cat_reset_btn")
             with Horizontal(classes="split_row"):
                 with Vertical(classes="left_pane"):
                     yield DataTable(id="cat_table")
@@ -370,8 +382,8 @@ class CategoryListScreen(Screen):
                     yield Static("-" * 25, classes="separator")
                     yield Static(id="cat_detail")
         with Vertical(classes="bottom_bar"):
-            yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [Esc] Back", id="help")
-            yield StatusBar("E=Edit  D=Delete  Esc=Back", id="status")
+            yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [F] Filter  [R] Reset  [Esc] Back", id="help")
+            yield StatusBar("E=Edit  D=Delete  F=Filter  R=Reset  Esc=Back", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -380,10 +392,10 @@ class CategoryListScreen(Screen):
         table.cursor_type = "row"
         self.load_data()
 
-    def load_data(self):
+    def load_data(self, params=None):
         table = self.query_one("#cat_table", DataTable)
         table.clear()
-        resp = api_get("/categories", username=self.app.user.get("username"))
+        resp = api_get("/categories", params=params, username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -395,6 +407,27 @@ class CategoryListScreen(Screen):
             for c in self._data:
                 table.add_row(str(c["id"]), c["name"], c["type"])
         self.update_detail()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cat_filter_btn":
+            self.action_apply_filter()
+        elif event.button.id == "cat_reset_btn":
+            self.action_reset_filter()
+
+    def action_apply_filter(self):
+        name = self.query_one("#cat_filter_name", Input).value.strip()
+        cat_type = self.query_one("#cat_filter_type", Select).value
+        params = {}
+        if name:
+            params["name"] = name
+        if cat_type and cat_type is not Select.BLANK:
+            params["type"] = str(cat_type)
+        self.load_data(params=params)
+
+    def action_reset_filter(self):
+        self.query_one("#cat_filter_name", Input).value = ""
+        self.query_one("#cat_filter_type", Select).clear()
+        self.load_data()
 
     def on_data_table_row_highlighted(self, event):
         self.update_detail()
@@ -639,6 +672,8 @@ class SourceListScreen(Screen):
         Binding("escape", "go_back", "Back"),
         Binding("e", "edit_selected", "Edit"),
         Binding("d", "delete_selected", "Delete"),
+        Binding("f", "apply_filter", "Filter"),
+        Binding("r", "reset_filter", "Reset"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -646,6 +681,12 @@ class SourceListScreen(Screen):
         with Container(classes="wide_panel"):
             yield Label("SOURCE LIST", classes="menu_header")
             yield Static("-" * 70, classes="separator")
+            with Horizontal(classes="filter_row"):
+                yield Input(placeholder="Filter by name", id="src_filter_name")
+                yield Input(placeholder="Min amount", id="src_filter_min")
+                yield Input(placeholder="Max amount", id="src_filter_max")
+                yield Button("Filter", variant="primary", id="src_filter_btn")
+                yield Button("Reset", variant="default", id="src_reset_btn")
             with Horizontal(classes="split_row"):
                 with Vertical(classes="left_pane"):
                     yield DataTable(id="src_table")
@@ -654,8 +695,8 @@ class SourceListScreen(Screen):
                     yield Static("-" * 25, classes="separator")
                     yield Static(id="src_detail")
         with Vertical(classes="bottom_bar"):
-            yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [Esc] Back", id="help")
-            yield StatusBar("E=Edit  D=Delete  Esc=Back", id="status")
+            yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [F] Filter  [R] Reset  [Esc] Back", id="help")
+            yield StatusBar("E=Edit  D=Delete  F=Filter  R=Reset  Esc=Back", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -664,10 +705,10 @@ class SourceListScreen(Screen):
         table.cursor_type = "row"
         self.load_data()
 
-    def load_data(self):
+    def load_data(self, params=None):
         table = self.query_one("#src_table", DataTable)
         table.clear()
-        resp = api_get("/sources", username=self.app.user.get("username"))
+        resp = api_get("/sources", params=params, username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -679,6 +720,37 @@ class SourceListScreen(Screen):
             for s in self._data:
                 table.add_row(str(s["id"]), s["name"], f"{s['amount']:,.2f}")
         self.update_detail()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "src_filter_btn":
+            self.action_apply_filter()
+        elif event.button.id == "src_reset_btn":
+            self.action_reset_filter()
+
+    def action_apply_filter(self):
+        name = self.query_one("#src_filter_name", Input).value.strip()
+        min_amt = self.query_one("#src_filter_min", Input).value.strip()
+        max_amt = self.query_one("#src_filter_max", Input).value.strip()
+        params = {}
+        if name:
+            params["name"] = name
+        if min_amt:
+            try:
+                params["min_amount"] = float(min_amt)
+            except ValueError:
+                pass
+        if max_amt:
+            try:
+                params["max_amount"] = float(max_amt)
+            except ValueError:
+                pass
+        self.load_data(params=params)
+
+    def action_reset_filter(self):
+        self.query_one("#src_filter_name", Input).value = ""
+        self.query_one("#src_filter_min", Input).value = ""
+        self.query_one("#src_filter_max", Input).value = ""
+        self.load_data()
 
     def on_data_table_row_highlighted(self, event):
         self.update_detail()
@@ -934,13 +1006,23 @@ class TransactionListScreen(Screen):
         Binding("escape", "go_back", "Back"),
         Binding("e", "edit_selected", "Edit"),
         Binding("d", "delete_selected", "Delete"),
+        Binding("f", "apply_filter", "Filter"),
+        Binding("r", "reset_filter", "Reset"),
     ]
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Container(classes="wide_panel"):
             yield Label("TRANSACTION LIST", classes="menu_header")
-            yield Static("-" * 70, classes="separator")
+            yield Rule()
+            with Horizontal(classes="filter_row"):
+                yield Input(placeholder="Date from (YYYY-MM-DD)", id="tx_filter_from")
+                yield Input(placeholder="Date to (YYYY-MM-DD)", id="tx_filter_to")
+                yield Input(placeholder="Min amount", id="tx_filter_min")
+                yield Input(placeholder="Max amount", id="tx_filter_max")
+                yield Input(placeholder="Description", id="tx_filter_desc")
+                yield Button("Filter", variant="primary", id="tx_filter_btn")
+                yield Button("Reset", variant="default", id="tx_reset_btn")
             with Horizontal(classes="split_row"):
                 with Vertical(classes="left_pane"):
                     yield DataTable(id="tx_table")
@@ -949,8 +1031,8 @@ class TransactionListScreen(Screen):
                     yield Static("-" * 25, classes="separator")
                     yield Static(id="tx_detail")
         with Vertical(classes="bottom_bar"):
-            yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [Esc] Back", id="help")
-            yield StatusBar("E=Edit  D=Delete  Esc=Back", id="status")
+            yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [F] Filter  [R] Reset  [Esc] Back", id="help")
+            yield StatusBar("E=Edit  D=Delete  F=Filter  R=Reset  Esc=Back", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -959,10 +1041,10 @@ class TransactionListScreen(Screen):
         table.cursor_type = "row"
         self.load_data()
 
-    def load_data(self):
+    def load_data(self, params=None):
         table = self.query_one("#tx_table", DataTable)
         table.clear()
-        resp = api_get("/transactions", username=self.app.user.get("username"))
+        resp = api_get("/transactions", params=params, username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -981,6 +1063,45 @@ class TransactionListScreen(Screen):
                     (t.get("description") or "")[:25],
                 )
         self.update_detail()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "tx_filter_btn":
+            self.action_apply_filter()
+        elif event.button.id == "tx_reset_btn":
+            self.action_reset_filter()
+
+    def action_apply_filter(self):
+        date_from = self.query_one("#tx_filter_from", Input).value.strip()
+        date_to = self.query_one("#tx_filter_to", Input).value.strip()
+        min_amt = self.query_one("#tx_filter_min", Input).value.strip()
+        max_amt = self.query_one("#tx_filter_max", Input).value.strip()
+        desc = self.query_one("#tx_filter_desc", Input).value.strip()
+        params = {}
+        if date_from:
+            params["date_from"] = date_from
+        if date_to:
+            params["date_to"] = date_to
+        if min_amt:
+            try:
+                params["min_amount"] = float(min_amt)
+            except ValueError:
+                pass
+        if max_amt:
+            try:
+                params["max_amount"] = float(max_amt)
+            except ValueError:
+                pass
+        if desc:
+            params["description"] = desc
+        self.load_data(params=params)
+
+    def action_reset_filter(self):
+        self.query_one("#tx_filter_from", Input).value = ""
+        self.query_one("#tx_filter_to", Input).value = ""
+        self.query_one("#tx_filter_min", Input).value = ""
+        self.query_one("#tx_filter_max", Input).value = ""
+        self.query_one("#tx_filter_desc", Input).value = ""
+        self.load_data()
 
     def on_data_table_row_highlighted(self, event):
         self.update_detail()
@@ -1069,7 +1190,7 @@ class TransactionByCategoryScreen(Screen):
         yield Header()
         with Container(classes="wide_panel"):
             yield Label("TRANSACTIONS BY CATEGORY", classes="menu_header")
-            yield Static("-" * 70, classes="separator")
+            yield Rule()
             yield Static(id="accordion_content")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [Enter] Expand/Collapse  [E] Edit  [D] Delete  [Esc] Back", id="help")
@@ -1835,7 +1956,7 @@ class AccountingApp(App):
     }
 
     .wide_panel {
-        width: 90;
+        width: 100%;
         height: auto;
         border: solid $primary;
         padding: 1 2;
@@ -1919,6 +2040,27 @@ class AccountingApp(App):
         width: 100%;
         height: auto;
         align: left middle;
+    }
+
+    .filter_row {
+        width: 100%;
+        height: auto;
+        align: left middle;
+        margin: 0 0 1 0;
+    }
+
+    .filter_row Input {
+        width: 15;
+        margin: 0 1 0 0;
+    }
+
+    .filter_row Select {
+        width: 15;
+        margin: 0 1 0 0;
+    }
+
+    .filter_row Button {
+        margin: 0 1 0 0;
     }
 
     Button {
