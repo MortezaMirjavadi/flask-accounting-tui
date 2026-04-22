@@ -2110,8 +2110,8 @@ class BudgetTreeScreen(Screen):
         status = self.query_one("#status", StatusBar)
         tree_content = self.query_one("#tree_content", Static)
         
-        # Fetch all budget periods
-        resp = api_get("/budget/periods", username=self.app.user.get("username"))
+        # Single API call for everything
+        resp = api_get("/budget/periods/with-items", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         
         if err:
@@ -2135,11 +2135,10 @@ class BudgetTreeScreen(Screen):
             period_prefix = "└── " if is_last_period else "├── "
             
             month_name = get_persian_month_name(period["month"])
-            tree_lines.append(f"{period_prefix}📅 {period['year']}/{period['month']} ({month_name})")
+            total = format_toman(period.get("total_planned", 0))
+            tree_lines.append(f"{period_prefix}📅 {period['year']}/{period['month']} ({month_name}) [{period['item_count']} items, {total}]")
             
-            # Fetch items for this period
-            items_resp = api_get(f"/budget/periods/{period['id']}/items", username=self.app.user.get("username"))
-            items_data, _ = handle_response(items_resp)
+            items_data = period.get("items", [])
             
             if items_data:
                 for j, item in enumerate(items_data):
@@ -2221,11 +2220,9 @@ class BudgetPeriodListScreen(Screen):
         if not data:
             status.update("No budget periods found. Press [A] to add one.")
             return
+        
         for period in data:
-            # Count items for this period
-            items_resp = api_get(f"/budget/periods/{period['id']}/items", username=self.app.user.get("username"))
-            items_data, _ = handle_response(items_resp)
-            item_count = len(items_data) if items_data else 0
+            item_count = period.get("item_count", 0)  # Now included in response!
             month_name = get_persian_month_name(period["month"])
             table.add_row(
                 str(period["id"]),
@@ -2234,10 +2231,11 @@ class BudgetPeriodListScreen(Screen):
                 str(item_count),
                 key=str(period["id"]),
             )
-            # Store the actual month number in the row for later retrieval
+            # Store month mapping
             if not hasattr(table, '_month_map'):
                 table._month_map = {}
             table._month_map[str(period["id"])] = period["month"]
+        
         table.zebra_stripes = True
         status.update(f"Loaded {len(data)} period(s). [A] Add  [E] Edit  [D] Delete  [I] Items")
 

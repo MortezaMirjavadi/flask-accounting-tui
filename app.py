@@ -877,7 +877,97 @@ def create_budget_period():
         conn.close()
         return jsonify({"error": "Budget period already exists for this year/month"}), 400
     conn.close()
-    return jsonify({"id": new_id, "year": payload["year"], "month": payload["month"]}), 201
+    return jsonify({"id": new_id, "year": payload["year"], "month": payload["month"]}), 
+
+@app.route("/budget/periods/with-items", methods=["GET"])
+def list_budget_periods_with_items():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    
+    year_filter = request.args.get("year", type=int)
+    month_filter = request.args.get("month", type=int)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Single query to get all periods with item counts and aggregated data
+    query = """
+        SELECT 
+            bp.id,
+            bp.year,
+            bp.month,
+            bp.created_at,
+            COALESCE(bi.item_count, 0) as item_count,
+            COALESCE(bi.total_planned, 0) as total_planned
+        FROM budget_periods bp
+        LEFT JOIN (
+            SELECT 
+                budget_period_id, 
+                COUNT(*) as item_count,
+                SUM(planned_amount) as total_planned
+            FROM budget_items
+            GROUP BY budget_period_id
+        ) bi ON bp.id = bi.budget_period_id
+        WHERE bp.user_id = ?
+    """
+    params = [user_id]
+    
+    if year_filter is not None:
+        query += " AND bp.year = ?"
+        params.append(year_filter)
+    if month_filter is not None:
+        query += " AND bp.month = ?"
+        params.append(month_filter)
+    
+    query += " ORDER BY bp.year DESC, bp.month DESC"
+    
+    cursor.execute(query, params)
+    periods = cursor.fetchall()
+    
+    # Get all items for all periods in one query
+    period_ids = [p["id"] for p in periods]
+    items_by_period = {}
+    
+    if period_ids:
+        # SQLite supports this, but for many IDs you might chunk this
+        placeholders = ",".join("?" * len(period_ids))
+        cursor.execute(f"""
+            SELECT 
+                bi.id,
+                bi.budget_period_id,
+                bi.planned_amount,
+                bi.notes,
+                c.name as category_name
+            FROM budget_items bi
+            JOIN categories c ON bi.category_id = c.id
+            WHERE bi.budget_period_id IN ({placeholders})
+            ORDER BY bi.budget_period_id, c.name
+        """, period_ids)
+        
+        for item in cursor.fetchall():
+            pid = item["budget_period_id"]
+            if pid not in items_by_period:
+                items_by_period[pid] = []
+            items_by_period[pid].append(dict(item))
+    
+    conn.close()
+    
+    # Build response
+    result = []
+    for period in periods:
+        period_dict = {
+            "id": period["id"],
+            "year": period["year"],
+            "month": period["month"],
+            "created_at": period["created_at"],
+            "item_count": period["item_count"],
+            "total_planned": period["total_planned"],
+            "items": items_by_period.get(period["id"], [])
+        }
+        result.append(period_dict)
+    
+    return jsonify(result)
 
 
 @app.route("/budget/periods/<int:period_id>", methods=["GET"])
@@ -904,15 +994,30 @@ def list_budget_periods():
 
     conn = get_connection()
     cursor = conn.cursor()
-    query = "SELECT * FROM budget_periods WHERE user_id = ?"
+    
+    query = """
+        SELECT 
+            bp.*,
+            COALESCE(bi.item_count, 0) as item_count
+        FROM budget_periods bp
+        LEFT JOIN (
+            SELECT budget_period_id, COUNT(*) as item_count
+            FROM budget_items
+            GROUP BY budget_period_id
+        ) bi ON bp.id = bi.budget_period_id
+        WHERE bp.user_id = ?
+    """
     params = [user_id]
+    
     if year_filter is not None:
-        query += " AND year = ?"
+        query += " AND bp.year = ?"
         params.append(year_filter)
     if month_filter is not None:
-        query += " AND month = ?"
+        query += " AND bp.month = ?"
         params.append(month_filter)
-    query += " ORDER BY year DESC, month DESC"
+    
+    query += " ORDER BY bp.year DESC, bp.month DESC"
+    
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
