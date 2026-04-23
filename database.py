@@ -40,6 +40,13 @@ def get_connection():
     return conn
 
 
+def _ensure_column(cursor, table_name, column_name, definition):
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    existing = {row["name"] for row in cursor.fetchall()}
+    if column_name not in existing:
+        cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+
+
 def init_db():
     """Initialize database tables if they don't exist."""
     conn = get_connection()
@@ -113,6 +120,36 @@ def init_db():
             UNIQUE(budget_period_id, category_id)
         )
     """)
+
+    cursor.executescript("""
+        CREATE TABLE IF NOT EXISTS transfers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            from_source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE RESTRICT,
+            to_source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE RESTRICT,
+            amount REAL NOT NULL CHECK(amount > 0),
+            date TEXT NOT NULL,
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            
+            CHECK(from_source_id != to_source_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_transfers_user ON transfers(user_id);
+        CREATE INDEX IF NOT EXISTS idx_transfers_from_source ON transfers(from_source_id);
+        CREATE INDEX IF NOT EXISTS idx_transfers_to_source ON transfers(to_source_id);
+        CREATE INDEX IF NOT EXISTS idx_transfers_date ON transfers(date);
+    """)
+
+    for table_name in (
+        "categories",
+        "sources",
+        "transactions",
+        "transfers",
+        "budget_periods",
+        "budget_items",
+    ):
+        _ensure_column(cursor, table_name, "deleted_at", "TEXT")
     
     conn.commit()
     conn.close()

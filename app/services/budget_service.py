@@ -6,7 +6,7 @@ class BudgetService:
     @staticmethod
     def get_period(cursor, period_id, user_id):
         cursor.execute(
-            "SELECT * FROM budget_periods WHERE id = ? AND user_id = ?",
+            "SELECT * FROM budget_periods WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
             (period_id, user_id),
         )
         return cursor.fetchone()
@@ -16,7 +16,7 @@ class BudgetService:
         cursor.execute(
             "SELECT bi.*, bp.user_id FROM budget_items bi "
             "JOIN budget_periods bp ON bi.budget_period_id = bp.id "
-            "WHERE bi.id = ? AND bp.user_id = ?",
+            "WHERE bi.id = ? AND bp.user_id = ? AND bi.deleted_at IS NULL AND bp.deleted_at IS NULL",
             (item_id, user_id),
         )
         return cursor.fetchone()
@@ -42,9 +42,10 @@ class BudgetService:
                     COUNT(*) as item_count,
                     SUM(planned_amount) as total_planned
                 FROM budget_items
+                WHERE deleted_at IS NULL
                 GROUP BY budget_period_id
             ) bi ON bp.id = bi.budget_period_id
-            WHERE bp.user_id = ?
+            WHERE bp.user_id = ? AND bp.deleted_at IS NULL
         """
         params = [user_id]
         
@@ -75,7 +76,7 @@ class BudgetService:
                     c.name as category_name
                 FROM budget_items bi
                 JOIN categories c ON bi.category_id = c.id
-                WHERE bi.budget_period_id IN ({placeholders})
+                WHERE bi.budget_period_id IN ({placeholders}) AND bi.deleted_at IS NULL
                 ORDER BY bi.budget_period_id, c.name
             """, period_ids)
             
@@ -114,8 +115,22 @@ class BudgetService:
             conn.close()
             return {"id": new_id, "year": year, "month": month}, None
         except sqlite3.IntegrityError:
+            cursor.execute(
+                "SELECT id FROM budget_periods WHERE user_id = ? AND year = ? AND month = ? AND deleted_at IS NOT NULL",
+                (user_id, year, month),
+            )
+            archived = cursor.fetchone()
+            if archived is None:
+                conn.close()
+                return None, "Budget period already exists for this year/month"
+            cursor.execute(
+                "UPDATE budget_periods SET deleted_at = NULL WHERE id = ?",
+                (archived["id"],),
+            )
+            conn.commit()
+            restored_id = archived["id"]
             conn.close()
-            return None, "Budget period already exists for this year/month"
+            return {"id": restored_id, "year": year, "month": month}, None
     
     @staticmethod
     def delete_period(period_id, user_id):
@@ -126,7 +141,14 @@ class BudgetService:
             conn.close()
             return False, "Budget period not found"
         
-        cursor.execute("DELETE FROM budget_periods WHERE id = ?", (period_id,))
+        cursor.execute(
+            "UPDATE budget_items SET deleted_at = CURRENT_TIMESTAMP WHERE budget_period_id = ? AND deleted_at IS NULL",
+            (period_id,),
+        )
+        cursor.execute(
+            "UPDATE budget_periods SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+            (period_id, user_id),
+        )
         conn.commit()
         conn.close()
         return True, None

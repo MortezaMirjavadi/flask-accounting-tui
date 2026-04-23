@@ -64,6 +64,7 @@ class SourceListScreen(Screen):
         Binding("escape", "go_back", "Back"),
         Binding("e", "edit_selected", "Edit"),
         Binding("d", "delete_selected", "Delete"),
+        Binding("t", "show_transfer_report", "Transfers"),
         Binding("f", "apply_filter", "Filter"),
         Binding("r", "reset_filter", "Reset"),
     ]
@@ -87,8 +88,8 @@ class SourceListScreen(Screen):
                     yield Rule()
                     yield Static(id="src_detail")
         with Vertical(classes="bottom_bar"):
-            yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [F] Filter  [R] Reset  [Esc] Back", id="help")
-            yield StatusBar("E=Edit  D=Delete  F=Filter  R=Reset  Esc=Back", id="status")
+            yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [T] Transfers  [F] Filter  [R] Reset  [Esc] Back", id="help")
+            yield StatusBar("E=Edit  D=Delete  T=Transfers  F=Filter  R=Reset  Esc=Back", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -185,6 +186,9 @@ class SourceListScreen(Screen):
         elif key == "d":
             event.stop()
             self.action_delete_selected()
+        elif key == "t":
+            event.stop()
+            self.action_show_transfer_report()
 
     def _get_selected_id(self):
         table = self.query_one("#src_table", DataTable)
@@ -228,6 +232,15 @@ class SourceListScreen(Screen):
                 self.load_data()
 
         self.app.push_screen(ConfirmBox("Delete selected source?", "Confirm"), on_confirm)
+
+    def action_show_transfer_report(self):
+        src_id = self._get_selected_id()
+        if src_id is None:
+            self.app.push_screen(MessageBox("No source selected.", "Info"))
+            return
+        src = next((item for item in getattr(self, "_data", []) if item["id"] == src_id), None)
+        src_name = src["name"] if src else "Source"
+        self.app.push_screen(SourceTransferReportScreen(src_id, src_name))
 
 
 class SourceAddScreen(Screen):
@@ -364,3 +377,75 @@ class SourceEditScreen(Screen):
             if self.on_save:
                 self.on_save()
             self.app.pop_screen()
+
+
+class SourceTransferReportScreen(Screen):
+    """Transfer report for a single source."""
+
+    BINDINGS = [Binding("escape", "go_back", "Back")]
+
+    def __init__(self, src_id: int, src_name: str, **kwargs):
+        self.src_id = src_id
+        self.src_name = src_name
+        super().__init__(**kwargs)
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Container(classes="wide_panel"):
+            yield Label(f"TRANSFER REPORT - {self.src_name}", classes="menu_header")
+            yield Rule()
+            yield Static(id="src_transfer_summary")
+            yield Rule()
+            yield DataTable(id="src_transfer_table")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[↑/↓] Navigate  [Esc] Back", id="help")
+            yield StatusBar("Transfer in/out records for selected source", id="status")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        table = self.query_one("#src_transfer_table", DataTable)
+        table.add_columns("ID", "Date", "Direction", "Amount", "Counterparty", "Note")
+        table.cursor_type = "row"
+        table.zebra_stripes = True
+        self.load_data()
+
+    def load_data(self):
+        table = self.query_one("#src_transfer_table", DataTable)
+        summary = self.query_one("#src_transfer_summary", Static)
+        table.clear()
+        resp = api_get(f"/sources/{self.src_id}/transfers", username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        if err:
+            self.app.push_screen(MessageBox(err, "Error"))
+            return
+
+        totals = (data or {}).get("summary", {})
+        summary.update(
+            f"[b]Transfer In:[/b]  {format_toman(totals.get('total_transfer_in', 0))}    "
+            f"[b]Transfer Out:[/b]  {format_toman(totals.get('total_transfer_out', 0))}    "
+            f"[b]Net:[/b]  {format_toman(totals.get('net_transfer', 0))}"
+        )
+
+        records = (data or {}).get("records", [])
+        if not records:
+            table.add_row("-", "-", "No transfers", "-", "-", "-")
+            return
+
+        for record in records:
+            direction = "IN" if record.get("direction") == "in" else "OUT"
+            counterparty = (
+                record.get("from_source_name")
+                if record.get("direction") == "in"
+                else record.get("to_source_name")
+            ) or "-"
+            table.add_row(
+                str(record["id"]),
+                record.get("date", ""),
+                direction,
+                format_toman(record.get("amount", 0)),
+                counterparty,
+                (record.get("notes") or "")[:30],
+            )
+
+    def action_go_back(self):
+        self.app.pop_screen()

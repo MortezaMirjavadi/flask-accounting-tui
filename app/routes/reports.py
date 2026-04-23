@@ -22,7 +22,7 @@ def transactions_summary():
             COALESCE(SUM(CASE WHEN c.type = 'cost' THEN t.amount ELSE 0 END), 0) AS total_cost
         FROM transactions t
         LEFT JOIN categories c ON t.category_id = c.id
-        WHERE t.user_id = ?
+        WHERE t.user_id = ? AND t.deleted_at IS NULL
         """,
         (user_id,),
     )
@@ -55,8 +55,8 @@ def report_by_category():
             c.type AS category_type,
             COALESCE(SUM(t.amount), 0) AS total
         FROM categories c
-        LEFT JOIN transactions t ON c.id = t.category_id
-        WHERE c.user_id = ?
+        LEFT JOIN transactions t ON c.id = t.category_id AND t.deleted_at IS NULL
+        WHERE c.user_id = ? AND c.deleted_at IS NULL
         GROUP BY c.id
         ORDER BY total DESC
         """,
@@ -83,7 +83,7 @@ def report_by_month():
             COALESCE(SUM(CASE WHEN c.type = 'cost' THEN t.amount ELSE 0 END), 0) AS total_cost
         FROM transactions t
         LEFT JOIN categories c ON t.category_id = c.id
-        WHERE t.user_id = ?
+        WHERE t.user_id = ? AND t.deleted_at IS NULL
         GROUP BY raw_date
         ORDER BY raw_date
         """,
@@ -130,8 +130,8 @@ def report_category_chart():
             c.type AS category_type,
             COALESCE(SUM(t.amount), 0) AS total
         FROM categories c
-        LEFT JOIN transactions t ON c.id = t.category_id
-        WHERE c.user_id = ?
+        LEFT JOIN transactions t ON c.id = t.category_id AND t.deleted_at IS NULL
+        WHERE c.user_id = ? AND c.deleted_at IS NULL
         GROUP BY c.id
         HAVING total > 0
         ORDER BY total DESC
@@ -161,7 +161,7 @@ def budget_report():
 
     # Find the budget period
     cursor.execute(
-        "SELECT * FROM budget_periods WHERE user_id = ? AND year = ? AND month = ?",
+        "SELECT * FROM budget_periods WHERE user_id = ? AND year = ? AND month = ? AND deleted_at IS NULL",
         (user_id, year, month),
     )
     period = cursor.fetchone()
@@ -177,7 +177,7 @@ def budget_report():
         "SELECT bi.*, c.name as category_name "
         "FROM budget_items bi "
         "JOIN categories c ON bi.category_id = c.id "
-        "WHERE bi.budget_period_id = ?",
+        "WHERE bi.budget_period_id = ? AND bi.deleted_at IS NULL",
         (period_id,),
     )
     items = cursor.fetchall()
@@ -207,7 +207,7 @@ def budget_report():
         cat_id = item["category_id"]
         cursor.execute(
             "SELECT COALESCE(SUM(amount), 0) as total FROM transactions "
-            "WHERE user_id = ? AND category_id = ? AND date >= ? AND date <= ?",
+            "WHERE user_id = ? AND category_id = ? AND date >= ? AND date <= ? AND deleted_at IS NULL",
             (user_id, cat_id, greg_start, greg_end),
         )
         spent_row = cursor.fetchone()

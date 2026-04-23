@@ -14,13 +14,23 @@ def reset_all_data():
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("DELETE FROM transactions WHERE user_id = ?", (user_id,))
-    cursor.execute("DELETE FROM sources WHERE user_id = ?", (user_id,))
-    cursor.execute("DELETE FROM categories WHERE user_id = ?", (user_id,))
-    # Note: budget_periods and budget_items will be deleted via CASCADE if set up,
-    # otherwise add explicit deletes
+    cursor.execute("UPDATE transactions SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = ? AND deleted_at IS NULL", (user_id,))
+    cursor.execute("UPDATE transfers SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = ? AND deleted_at IS NULL", (user_id,))
+    cursor.execute(
+        """
+        UPDATE budget_items
+        SET deleted_at = CURRENT_TIMESTAMP
+        WHERE budget_period_id IN (
+            SELECT id FROM budget_periods WHERE user_id = ? AND deleted_at IS NULL
+        ) AND deleted_at IS NULL
+        """,
+        (user_id,),
+    )
+    cursor.execute("UPDATE budget_periods SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = ? AND deleted_at IS NULL", (user_id,))
+    cursor.execute("UPDATE sources SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = ? AND deleted_at IS NULL", (user_id,))
+    cursor.execute("UPDATE categories SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = ? AND deleted_at IS NULL", (user_id,))
     
     conn.commit()
     conn.close()
     
-    return jsonify({"message": "All data reset successfully"})
+    return jsonify({"message": "All data archived successfully"})

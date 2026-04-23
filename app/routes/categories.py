@@ -19,7 +19,7 @@ def list_categories():
     conn = get_connection()
     cursor = conn.cursor()
     
-    query = "SELECT * FROM categories WHERE user_id = ?"
+    query = "SELECT * FROM categories WHERE user_id = ? AND deleted_at IS NULL"
     params = [user_id]
     
     if name_filter:
@@ -59,8 +59,20 @@ def create_category():
         conn.commit()
         new_id = cursor.lastrowid
     except sqlite3.IntegrityError as exc:
-        conn.close()
-        return jsonify({"error": str(exc)}), 400
+        cursor.execute(
+            "SELECT id FROM categories WHERE user_id = ? AND name = ? AND deleted_at IS NOT NULL",
+            (user_id, payload["name"]),
+        )
+        archived = cursor.fetchone()
+        if archived is None:
+            conn.close()
+            return jsonify({"error": str(exc)}), 400
+        cursor.execute(
+            "UPDATE categories SET type = ?, deleted_at = NULL WHERE id = ?",
+            (payload["type"], archived["id"]),
+        )
+        conn.commit()
+        new_id = archived["id"]
     
     conn.close()
     return jsonify({"id": new_id, **payload}), 201
@@ -75,7 +87,7 @@ def get_category(cat_id):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT * FROM categories WHERE id = ? AND user_id = ?",
+        "SELECT * FROM categories WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
         (cat_id, user_id)
     )
     row = cursor.fetchone()
@@ -103,7 +115,7 @@ def update_category(cat_id):
     cursor = conn.cursor()
     
     cursor.execute(
-        "SELECT id FROM categories WHERE id = ? AND user_id = ?",
+        "SELECT id FROM categories WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
         (cat_id, user_id)
     )
     if cursor.fetchone() is None:
@@ -134,15 +146,18 @@ def delete_category(cat_id):
     cursor = conn.cursor()
     
     cursor.execute(
-        "SELECT id FROM categories WHERE id = ? AND user_id = ?",
+        "SELECT id FROM categories WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
         (cat_id, user_id)
     )
     if cursor.fetchone() is None:
         conn.close()
         return jsonify({"error": "Category not found"}), 404
     
-    cursor.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
+    cursor.execute(
+        "UPDATE categories SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+        (cat_id, user_id),
+    )
     conn.commit()
     conn.close()
     
-    return jsonify({"message": "Category deleted"})
+    return jsonify({"message": "Category archived"})

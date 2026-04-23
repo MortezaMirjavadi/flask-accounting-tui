@@ -56,7 +56,7 @@ def validate_transaction_payload(data):
     if not date:
         raise ValueError("Date is required")
 
-    gregorian_date = jalali_to_gregorian(date_str)
+    gregorian_date = jalali_to_gregorian(date)
 
     try:
         amount = float(amount)

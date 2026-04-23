@@ -30,9 +30,10 @@ def list_periods():
         LEFT JOIN (
             SELECT budget_period_id, COUNT(*) as item_count
             FROM budget_items
+            WHERE deleted_at IS NULL
             GROUP BY budget_period_id
         ) bi ON bp.id = bi.budget_period_id
-        WHERE bp.user_id = ?
+        WHERE bp.user_id = ? AND bp.deleted_at IS NULL
     """
     params = [user_id]
     
@@ -146,7 +147,7 @@ def delete_period(period_id):
     if not success:
         return jsonify({"error": error}), 404
     
-    return jsonify({"message": "Budget period deleted"})
+    return jsonify({"message": "Budget period archived"})
 
 
 # Item routes
@@ -178,7 +179,7 @@ def create_item():
 
     # Verify category belongs to user
     cursor.execute(
-        "SELECT id FROM categories WHERE id = ? AND user_id = ?",
+        "SELECT id FROM categories WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
         (payload["category_id"], user_id),
     )
     if cursor.fetchone() is None:
@@ -193,8 +194,27 @@ def create_item():
         conn.commit()
         new_id = cursor.lastrowid
     except sqlite3.IntegrityError:
-        conn.close()
-        return jsonify({"error": "Budget item already exists for this category in this period"}), 400
+        cursor.execute(
+            """
+            SELECT id FROM budget_items
+            WHERE budget_period_id = ? AND category_id = ? AND deleted_at IS NOT NULL
+            """,
+            (period_id, payload["category_id"]),
+        )
+        archived = cursor.fetchone()
+        if archived is None:
+            conn.close()
+            return jsonify({"error": "Budget item already exists for this category in this period"}), 400
+        cursor.execute(
+            """
+            UPDATE budget_items
+            SET planned_amount = ?, notes = ?, deleted_at = NULL
+            WHERE id = ?
+            """,
+            (payload["planned_amount"], payload["notes"], archived["id"]),
+        )
+        conn.commit()
+        new_id = archived["id"]
     
     conn.close()
     return jsonify({"id": new_id, "budget_period_id": period_id, **payload}), 201
@@ -234,7 +254,7 @@ def list_items(period_id):
         "SELECT bi.*, c.name as category_name, c.type as category_type "
         "FROM budget_items bi "
         "JOIN categories c ON bi.category_id = c.id "
-        "WHERE bi.budget_period_id = ?",
+        "WHERE bi.budget_period_id = ? AND bi.deleted_at IS NULL",
         (period_id,),
     )
     rows = cursor.fetchall()
@@ -265,7 +285,7 @@ def update_item(item_id):
 
     # Verify category belongs to user
     cursor.execute(
-        "SELECT id FROM categories WHERE id = ? AND user_id = ?",
+        "SELECT id FROM categories WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
         (payload["category_id"], user_id),
     )
     if cursor.fetchone() is None:
@@ -274,7 +294,7 @@ def update_item(item_id):
 
     try:
         cursor.execute(
-            "UPDATE budget_items SET category_id = ?, planned_amount = ?, notes = ? WHERE id = ?",
+            "UPDATE budget_items SET category_id = ?, planned_amount = ?, notes = ? WHERE id = ? AND deleted_at IS NULL",
             (payload["category_id"], payload["planned_amount"], payload["notes"], item_id),
         )
         conn.commit()
@@ -299,8 +319,11 @@ def delete_item(item_id):
         conn.close()
         return jsonify({"error": "Budget item not found"}), 404
     
-    cursor.execute("DELETE FROM budget_items WHERE id = ?", (item_id,))
+    cursor.execute(
+        "UPDATE budget_items SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL",
+        (item_id,),
+    )
     conn.commit()
     conn.close()
     
-    return jsonify({"message": "Budget item deleted"})
+    return jsonify({"message": "Budget item archived"})

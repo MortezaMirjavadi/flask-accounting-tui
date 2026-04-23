@@ -1,6 +1,6 @@
 import sqlite3
 from flask import Blueprint, request, jsonify
-from app.utils.helpers import get_user_id_from_request, row_to_dict
+from app.utils.helpers import get_user_id_from_request, row_to_dict, gregorian_to_jalali
 from app.models import validate_source_payload
 from database import get_connection
 
@@ -20,7 +20,7 @@ def list_sources():
     conn = get_connection()
     cursor = conn.cursor()
     
-    query = "SELECT * FROM sources WHERE user_id = ?"
+    query = "SELECT * FROM sources WHERE user_id = ? AND deleted_at IS NULL"
     params = [user_id]
     
     if name_filter:
@@ -63,8 +63,20 @@ def create_source():
         conn.commit()
         new_id = cursor.lastrowid
     except sqlite3.IntegrityError as exc:
-        conn.close()
-        return jsonify({"error": str(exc)}), 400
+        cursor.execute(
+            "SELECT id FROM sources WHERE user_id = ? AND name = ? AND deleted_at IS NOT NULL",
+            (user_id, payload["name"]),
+        )
+        archived = cursor.fetchone()
+        if archived is None:
+            conn.close()
+            return jsonify({"error": str(exc)}), 400
+        cursor.execute(
+            "UPDATE sources SET amount = ?, deleted_at = NULL WHERE id = ?",
+            (payload["amount"], archived["id"]),
+        )
+        conn.commit()
+        new_id = archived["id"]
     
     conn.close()
     return jsonify({"id": new_id, **payload}), 201
@@ -79,7 +91,7 @@ def get_source(source_id):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT * FROM sources WHERE id = ? AND user_id = ?",
+        "SELECT * FROM sources WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
         (source_id, user_id)
     )
     row = cursor.fetchone()
@@ -107,7 +119,7 @@ def update_source(source_id):
     cursor = conn.cursor()
     
     cursor.execute(
-        "SELECT id FROM sources WHERE id = ? AND user_id = ?",
+        "SELECT id FROM sources WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
         (source_id, user_id)
     )
     if cursor.fetchone() is None:
@@ -138,18 +150,21 @@ def delete_source(source_id):
     cursor = conn.cursor()
     
     cursor.execute(
-        "SELECT id FROM sources WHERE id = ? AND user_id = ?",
+        "SELECT id FROM sources WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
         (source_id, user_id)
     )
     if cursor.fetchone() is None:
         conn.close()
         return jsonify({"error": "Source not found"}), 404
     
-    cursor.execute("DELETE FROM sources WHERE id = ?", (source_id,))
+    cursor.execute(
+        "UPDATE sources SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+        (source_id, user_id),
+    )
     conn.commit()
     conn.close()
     
-    return jsonify({"message": "Source deleted"})
+    return jsonify({"message": "Source archived"})
 
 
 @bp.route("/<int:source_id>/balance", methods=["GET"])
@@ -162,7 +177,7 @@ def source_balance(source_id):
     cursor = conn.cursor()
     
     cursor.execute(
-        "SELECT id FROM sources WHERE id = ? AND user_id = ?",
+        "SELECT id FROM sources WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
         (source_id, user_id)
     )
     if cursor.fetchone() is None:
@@ -176,7 +191,7 @@ def source_balance(source_id):
             COALESCE(SUM(CASE WHEN c.type = 'cost' THEN t.amount ELSE 0 END), 0) AS total_cost
         FROM transactions t
         LEFT JOIN categories c ON t.category_id = c.id
-        WHERE t.source_id = ? AND t.user_id = ?
+        WHERE t.source_id = ? AND t.user_id = ? AND t.deleted_at IS NULL
         """,
         (source_id, user_id),
     )
@@ -192,3 +207,75 @@ def source_balance(source_id):
         "total_cost": total_cost,
         "balance": total_income - total_cost,
     })
+
+
+@bp.route("/<int:source_id>/transfers", methods=["GET"])
+def source_transfers(source_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT id, name FROM sources WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+        (source_id, user_id),
+    )
+    source = cursor.fetchone()
+    if source is None:
+        conn.close()
+        return jsonify({"error": "Source not found"}), 404
+
+    cursor.execute(
+        """
+        SELECT
+            t.id,
+            t.date,
+            t.amount,
+            t.notes,
+            t.from_source_id,
+            t.to_source_id,
+            fs.name AS from_source_name,
+            ts.name AS to_source_name,
+            CASE
+                WHEN t.to_source_id = ? THEN 'in'
+                ELSE 'out'
+            END AS direction
+        FROM transfers t
+        LEFT JOIN sources fs ON t.from_source_id = fs.id
+        LEFT JOIN sources ts ON t.to_source_id = ts.id
+        WHERE t.user_id = ?
+          AND t.deleted_at IS NULL
+          AND (t.from_source_id = ? OR t.to_source_id = ?)
+        ORDER BY t.date DESC, t.id DESC
+        """,
+        (source_id, user_id, source_id, source_id),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    records = []
+    total_in = 0
+    total_out = 0
+    for row in rows:
+        record = row_to_dict(row)
+        record["date"] = gregorian_to_jalali(record["date"])
+        if record.get("direction") == "in":
+            total_in += record.get("amount", 0) or 0
+        else:
+            total_out += record.get("amount", 0) or 0
+        records.append(record)
+
+    return jsonify(
+        {
+            "source_id": source_id,
+            "source_name": source["name"],
+            "summary": {
+                "total_transfer_in": total_in,
+                "total_transfer_out": total_out,
+                "net_transfer": total_in - total_out,
+            },
+            "records": records,
+        }
+    )

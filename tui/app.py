@@ -25,6 +25,14 @@ class AccountingApp(App):
         background: $surface;
     }
 
+    .form_panel {
+        width: 72;
+        height: 1fr;
+        border: solid $primary;
+        padding: 1 2;
+        background: $surface;
+    }
+
     .wide_panel {
         width: 100%;
         height: 1fr;
@@ -116,15 +124,50 @@ class AccountingApp(App):
         margin: 0 0 1 0;
     }
 
+    TextArea {
+        width: 100%;
+        height: 5;
+        margin: 0 0 1 0;
+    }
+
     Select {
         width: 100%;
         margin: 0 0 1 0;
+    }
+
+    Checkbox {
+        width: 100%;
+        margin: 0 0 1 0;
+    }
+
+    .hidden {
+        display: none;
     }
 
     .button_row {
         width: 100%;
         height: auto;
         align: left middle;
+    }
+
+    .form_scroll {
+        width: 100%;
+        height: 1fr;
+        padding: 0 1 0 0;
+    }
+
+    .form_row {
+        width: 100%;
+        height: auto;
+    }
+
+    .form_col {
+        width: 1fr;
+        height: auto;
+    }
+
+    .form_col_spacer {
+        width: 2;
     }
 
     .filter_row {
@@ -140,7 +183,7 @@ class AccountingApp(App):
     }
 
     .filter_row Select {
-        width: 25;
+        width: 16;
         margin: 0 1 0 0;
     }
 
