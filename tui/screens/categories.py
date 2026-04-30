@@ -6,7 +6,7 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import (
     Button, DataTable, Footer, Header, Input, Label, 
-    ListItem, ListView, Select, Static
+    ListItem, ListView, Select, Static, Rule
 )
 
 from tui.api import api_get, api_post, api_put, api_delete, handle_response
@@ -24,9 +24,9 @@ class CategoriesScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(classes="main_panel"):
+        with Container(classes="main_panel center_screen"):
             yield Label("CATEGORIES", classes="menu_header")
-            yield Static("-" * 50, classes="separator")
+            yield Rule()
             yield ListView(
                 ListItem(Label("1. List Categories")),
                 ListItem(Label("2. Add Category")),
@@ -70,9 +70,9 @@ class CategoryListScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(classes="wide_panel"):
+        with Container(classes="wide_panel center_screen"):
             yield Label("CATEGORY LIST", classes="menu_header")
-            yield Static("-" * 50, classes="separator")
+            yield Rule()
             with Horizontal(classes="filter_row"):
                 yield Input(placeholder="Filter by name", id="cat_filter_name")
                 yield Select(
@@ -87,7 +87,7 @@ class CategoryListScreen(Screen):
                     yield DataTable(id="cat_table")
                 with Vertical(classes="right_pane"):
                     yield Label("DETAILS", classes="detail_header")
-                    yield Static("-" * 25, classes="separator")
+                    yield Rule()
                     yield Static(id="cat_detail")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [F] Filter  [R] Reset  [Esc] Back", id="help")
@@ -220,9 +220,9 @@ class CategoryAddScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(classes="main_panel"):
+        with Container(classes="main_panel center_screen"):
             yield Label("ADD CATEGORY", classes="menu_header")
-            yield Static("-" * 50, classes="separator")
+            yield Rule()
             yield Label("Name:")
             yield Input(placeholder="Category name", id="cat_name")
             yield Label("Type:")
@@ -283,9 +283,9 @@ class CategoryEditScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(classes="main_panel"):
+        with Container(classes="main_panel center_screen"):
             yield Label("EDIT CATEGORY", classes="menu_header")
-            yield Static("-" * 50, classes="separator")
+            yield Rule()
             yield Label("Name:")
             yield Input(placeholder="Category name", id="cat_name")
             yield Label("Type:")

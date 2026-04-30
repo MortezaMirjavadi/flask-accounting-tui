@@ -29,7 +29,7 @@ class BudgetScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Container(classes="main_panel"):
+        with Container(classes="main_panel center_screen"):
             yield Label("BUDGET MANAGEMENT", classes="menu_header")
             yield Rule()
             yield ListView(
@@ -79,7 +79,7 @@ class BudgetTreeScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Container(classes="wide_panel"):
+        with Container(classes="wide_panel center_screen"):
             yield Label("BUDGET TREE VIEW", classes="detail_header")
             yield Rule()
             with VerticalScroll(id="tree_scroll"):
@@ -184,7 +184,7 @@ class BudgetPeriodListScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Container(classes="wide_panel"):
+        with Container(classes="wide_panel center_screen"):
             yield Label("BUDGET PERIODS", classes="detail_header")
             yield Rule()
             yield DataTable(id="periods_table")
@@ -301,7 +301,7 @@ class BudgetPeriodAddScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Container(classes="main_panel"):
+        with Container(classes="main_panel center_screen"):
             yield Label("ADD BUDGET PERIOD", classes="detail_header")
             yield Rule()
             yield Label("Year (Jalali):")
@@ -369,7 +369,7 @@ class BudgetPeriodEditScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Container(classes="main_panel"):
+        with Container(classes="main_panel center_screen"):
             yield Label("EDIT BUDGET PERIOD", classes="detail_header")
             yield Rule()
             yield Label("Year (Jalali):")
@@ -458,7 +458,7 @@ class BudgetItemListScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Container(classes="wide_panel"):
+        with Container(classes="wide_panel center_screen"):
             month_name = get_persian_month_name(self.month)
             yield Label(f"BUDGET ITEMS - {self.year}/{self.month} ({month_name})", classes="detail_header")
             yield Rule()
@@ -551,7 +551,7 @@ class BudgetItemAddScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Container(classes="main_panel"):
+        with Container(classes="main_panel center_screen"):
             yield Label("ADD BUDGET ITEM", classes="detail_header")
             yield Rule()
             yield Label("Category:")
@@ -643,7 +643,7 @@ class BudgetItemEditScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Container(classes="main_panel"):
+        with Container(classes="main_panel center_screen"):
             yield Label("EDIT BUDGET ITEM", classes="detail_header")
             yield Rule()
             yield Label("Category:")
@@ -746,7 +746,7 @@ class BudgetReportScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Container(classes="wide_panel"):
+        with Container(classes="wide_panel center_screen"):
             yield Label("BUDGET REPORT", classes="detail_header")
             yield Rule()
             with Horizontal(classes="filter_row"):

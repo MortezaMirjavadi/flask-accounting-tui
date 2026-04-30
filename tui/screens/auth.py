@@ -19,7 +19,7 @@ class LoginScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(classes="main_panel"):
+        with Container(classes="main_panel center_screen"):
             yield Label("TERMINAL ACCOUNTING SYSTEM", classes="main_title")
             yield Rule()
             yield Label("LOGIN", classes="menu_header")

@@ -14,7 +14,38 @@ class AccountingApp(App):
     CSS = """
     Screen {
         align: center middle;
+        content-align: center middle;
         background: $surface-darken-1;
+    }
+
+    .center_screen {
+        content-align: center middle;
+    }
+
+    MainMenuScreen {
+        align: center middle;
+    }
+
+    ModalScreen {
+        align: center middle;
+        content-align: center middle;
+    }
+
+    .center_screen.form_panel {
+        width: 72;
+        height: 1fr;
+        max-height: 85%;
+        border: solid $primary;
+        padding: 1 2;
+        background: $surface;
+    }
+
+    .center_screen.wide_panel {
+        width: 90%;
+        height: 90%;
+        border: solid $primary;
+        padding: 1;
+        background: $surface;
     }
 
     .main_panel {
@@ -28,6 +59,7 @@ class AccountingApp(App):
     .form_panel {
         width: 72;
         height: 1fr;
+        max-height: 85%;
         border: solid $primary;
         padding: 1 2;
         background: $surface;
@@ -153,6 +185,7 @@ class AccountingApp(App):
     .form_scroll {
         width: 100%;
         height: 1fr;
+        min-height: 0;
         padding: 0 1 0 0;
     }
 
@@ -256,6 +289,64 @@ class AccountingApp(App):
         width: 100%;
         height: auto;
         align: center middle;
+    }
+
+    JalaliDatePicker {
+        width: 100%;
+        height: auto;
+        border: solid $primary-darken-2;
+        background: $surface-darken-1;
+        padding: 1;
+        margin: 0 0 1 0;
+    }
+    JalaliDatePicker .picker_header {
+        text-align: center;
+        color: $primary-lighten-2;
+        text-style: bold;
+        height: 1;
+        margin: 0 0 1 0;
+    }
+    JalaliDatePicker .picker_columns {
+        width: 100%;
+        height: auto;
+    }
+    JalaliDatePicker .picker_col {
+        width: 1fr;
+        height: auto;
+        border: solid $primary-darken-2;
+        background: $surface;
+        padding: 0;
+    }
+    JalaliDatePicker .picker_col_header {
+        text-align: center;
+        color: $primary;
+        text-style: bold;
+        background: $primary-darken-3;
+        height: 1;
+        padding: 0;
+    }
+    JalaliDatePicker .picker_item {
+        text-align: center;
+        height: 1;
+        padding: 0;
+    }
+    JalaliDatePicker .picker_item_selected {
+        text-align: center;
+        background: $primary;
+        color: $text;
+        text-style: bold;
+        height: 1;
+        padding: 0;
+    }
+    JalaliDatePicker .picker_controls {
+        width: 100%;
+        height: auto;
+        align: center middle;
+        margin: 1 0 0 0;
+    }
+    JalaliDatePicker .picker_controls Button {
+        width: 8;
+        margin: 0 1;
     }
     """
 

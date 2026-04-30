@@ -30,7 +30,7 @@ class BaseListScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(classes="wide_panel"):
+        with Container(classes="wide_panel center_screen"):
             yield Label(self.title, classes="menu_header")
             yield Rule()
             with Horizontal(classes="split_row"):

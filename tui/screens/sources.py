@@ -24,7 +24,7 @@ class SourcesScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(classes="main_panel"):
+        with Container(classes="main_panel center_screen"):
             yield Label("SOURCES", classes="menu_header")
             yield Rule()
             yield ListView(
@@ -71,7 +71,7 @@ class SourceListScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(classes="wide_panel"):
+        with Container(classes="wide_panel center_screen"):
             yield Label("SOURCE LIST", classes="menu_header")
             yield Rule()
             with Horizontal(classes="filter_row"):
@@ -250,7 +250,7 @@ class SourceAddScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(classes="main_panel"):
+        with Container(classes="main_panel center_screen"):
             yield Label("ADD SOURCE", classes="menu_header")
             yield Rule()
             yield Label("Name:")
@@ -316,7 +316,7 @@ class SourceEditScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(classes="main_panel"):
+        with Container(classes="main_panel center_screen"):
             yield Label("EDIT SOURCE", classes="menu_header")
             yield Rule()
             yield Label("Name:")
@@ -391,7 +391,7 @@ class SourceTransferReportScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(classes="wide_panel"):
+        with Container(classes="wide_panel center_screen"):
             yield Label(f"TRANSFER REPORT - {self.src_name}", classes="menu_header")
             yield Rule()
             yield Static(id="src_transfer_summary")

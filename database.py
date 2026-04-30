@@ -121,6 +121,43 @@ def init_db():
         )
     """)
 
+    # Financial events definitions (recurring or single)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS financial_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            title TEXT NOT NULL,
+            description TEXT,
+            amount REAL NOT NULL,
+            category_id INTEGER NOT NULL REFERENCES categories(id),
+            source_id INTEGER REFERENCES sources(id),
+            frequency TEXT NOT NULL DEFAULT 'once',
+            repeat_interval INTEGER NOT NULL DEFAULT 1,
+            start_date TEXT NOT NULL,
+            end_date TEXT,
+            occurrence_limit INTEGER,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            last_modified_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            deleted_at TEXT
+        )
+    """)
+
+    # Generated instances (pending, confirmed, skipped, etc.)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS financial_event_instances (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER NOT NULL REFERENCES financial_events(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            due_date TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            snoozed_from TEXT,
+            transaction_id INTEGER REFERENCES transactions(id),
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            last_modified_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     cursor.executescript("""
         CREATE TABLE IF NOT EXISTS transfers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -139,6 +176,31 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_transfers_from_source ON transfers(from_source_id);
         CREATE INDEX IF NOT EXISTS idx_transfers_to_source ON transfers(to_source_id);
         CREATE INDEX IF NOT EXISTS idx_transfers_date ON transfers(date);
+    """)
+
+    # Ensure legacy tables contain soft-delete support used across services
+    for table_name in (
+        "categories",
+        "sources",
+        "transactions",
+        "transfers",
+        "budget_periods",
+        "budget_items",
+        "financial_events",
+        "financial_event_instances",
+    ):
+        _ensure_column(cursor, table_name, "deleted_at", "TEXT")
+
+    # Keep query speed high for calendar and forecasting modules
+    cursor.executescript("""
+        CREATE INDEX IF NOT EXISTS idx_financial_events_user_active
+            ON financial_events(user_id, status, deleted_at);
+        CREATE INDEX IF NOT EXISTS idx_financial_events_date
+            ON financial_events(user_id, start_date);
+        CREATE INDEX IF NOT EXISTS idx_financial_event_instances_user_due
+            ON financial_event_instances(user_id, due_date, status);
+        CREATE INDEX IF NOT EXISTS idx_financial_event_instances_event
+            ON financial_event_instances(event_id, due_date);
     """)
 
     for table_name in (
