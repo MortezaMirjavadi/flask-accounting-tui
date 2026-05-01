@@ -14,7 +14,7 @@ from tui.widgets import HelpTip, StatusBar
 
 class MainMenuScreen(Screen):
     """Main application menu."""
-    
+
     BINDINGS = [
         Binding("q", "quit", "Exit"),
         Binding("1", "go_categories", "Categories"),
@@ -22,13 +22,14 @@ class MainMenuScreen(Screen):
         Binding("3", "go_transactions", "Transactions"),
         Binding("4", "go_reports", "Reports"),
         Binding("5", "go_budget", "Budget"),
-        Binding("6", "go_settings", "Settings"),
+        Binding("6", "go_calendar", "Calendar"),
+        Binding("7", "go_settings", "Settings"),
         Binding("l", "logout", "Logout"),
     ]
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Container(classes="main_panel"):
+        with Container(classes="main_panel center_screen"):
             yield Label("TERMINAL ACCOUNTING SYSTEM", classes="main_title")
             yield Static("=" * 50, classes="separator")
             user = getattr(self.app, "user", None)
@@ -43,9 +44,10 @@ class MainMenuScreen(Screen):
                 ListItem(Label("3. Transactions")),
                 ListItem(Label("4. Reports")),
                 ListItem(Label("5. Budget")),
-                ListItem(Label("6. Settings")),
-                ListItem(Label("7. Logout")),
-                ListItem(Label("8. Exit")),
+                ListItem(Label("6. Calendar")),
+                ListItem(Label("7. Settings")),
+                ListItem(Label("8. Logout")),
+                ListItem(Label("9. Exit")),
                 id="main_menu_list",
             )
         with Vertical(classes="bottom_bar"):
@@ -54,7 +56,7 @@ class MainMenuScreen(Screen):
             shamsi_str = jalali_now.strftime("%Y-%m-%d")
             yield HelpTip(
                 f"Date: [{shamsi_str}]  [↑/↓] Navigate  [Enter] Select  "
-                f"[1-6] Quick select  [L] Logout  [Q] Exit",
+                f"[1-7] Quick select  [L] Logout  [Q] Exit",
                 id="help"
             )
             yield StatusBar("Enter=Select  Esc=Back  L=Logout  Q=Quit", id="status")
@@ -63,11 +65,13 @@ class MainMenuScreen(Screen):
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle menu selection."""
         idx = event.list_view.index
-        if idx == 6:  # Logout
+        if idx == 7:  # Logout
             self.action_logout()
-        elif idx == 7:  # Exit
+        elif idx == 8:  # Exit
             self.app.action_quit()
-        elif 0 <= idx < 6:
+        elif idx == 5:  # Calendar
+            self.action_go_calendar()
+        elif 0 <= idx < 7:
             screen_class = self._get_screen_class(idx)
             self.app.push_screen(screen_class())
 
@@ -79,7 +83,8 @@ class MainMenuScreen(Screen):
             2: ("tui.screens.transactions", "TransactionsScreen"),
             3: ("tui.screens.reports", "ReportsScreen"),
             4: ("tui.screens.budget", "BudgetScreen"),
-            5: ("tui.screens.settings", "SettingsScreen"),
+            5: ("tui.calendar_view", "CalendarScreen"),
+            6: ("tui.screens.settings", "SettingsScreen"),
         }
         import importlib
         module_name, class_name = screen_map[idx]
@@ -105,6 +110,17 @@ class MainMenuScreen(Screen):
     def action_go_budget(self):
         from tui.screens.budget import BudgetScreen
         self.app.push_screen(BudgetScreen())
+
+    def action_go_calendar(self):
+        """Navigate to calendar screen."""
+        from tui.calendar_view import CalendarScreen
+        user = getattr(self.app, "user", None)
+        user_id = user.get("id") if user else None
+        if user_id is None:
+            from tui.widgets import MessageBox
+            self.app.push_screen(MessageBox("No user logged in", "Error", is_error=True))
+            return
+        self.app.push_screen(CalendarScreen(user_id=user_id))
 
     def action_go_settings(self):
         from tui.screens.settings import SettingsScreen

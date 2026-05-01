@@ -19,7 +19,7 @@ class SettingsScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Container(classes="main_panel"):
+        with Container(classes="main_panel center_screen"):
             yield Label("SETTINGS", classes="menu_header")
             yield Static("-" * 50, classes="separator")
             yield ListView(

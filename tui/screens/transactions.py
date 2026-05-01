@@ -1,6 +1,6 @@
 """Transaction management screens."""
 
-from datetime import datetime
+from datetime import date, datetime
 
 import jdatetime
 from textual.app import ComposeResult
@@ -13,6 +13,7 @@ from textual.widgets import (
 )
 
 from tui.api import api_get, api_post, api_put, api_delete, handle_response, format_toman
+from tui.jalali_date_picker import JalaliDatePicker
 from tui.widgets import ConfirmBox, HelpTip, MessageBox, StatusBar
 
 
@@ -28,7 +29,7 @@ class TransactionsScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(classes="main_panel"):
+        with Container(classes="main_panel center_screen"):
             yield Label("TRANSACTIONS", classes="menu_header")
             yield Rule()
             yield ListView(
@@ -80,7 +81,7 @@ class TransactionListScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(classes="wide_panel"):
+        with Container(classes="wide_panel center_screen"):
             yield Label("TRANSACTION LIST", classes="menu_header")
             yield Rule()
             with Horizontal(classes="filter_row"):
@@ -289,7 +290,7 @@ class TransactionByCategoryScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(classes="wide_panel"):
+        with Container(classes="wide_panel center_screen"):
             yield Label("TRANSACTIONS BY CATEGORY", classes="menu_header")
             yield Rule()
             yield Static(id="accordion_content")
@@ -497,12 +498,15 @@ class TransactionByCategoryScreen(Screen):
 
 class TransactionAddScreen(Screen):
     """Add new transaction screen."""
-    
-    BINDINGS = [Binding("escape", "go_back", "Back")]
+
+    BINDINGS = [
+        Binding("escape", "go_back", "Back"),
+        Binding("ctrl+d", "toggle_date_picker", "Date Picker"),
+    ]
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(classes="form_panel"):
+        with Container(classes="form_panel center_screen"):
             yield Label("ADD TRANSACTION", classes="menu_header")
             yield Rule()
             with VerticalScroll(classes="form_scroll"):
@@ -529,8 +533,8 @@ class TransactionAddScreen(Screen):
                 yield Button("Save", variant="primary", id="save")
                 yield Button("Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
-            yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
-            yield StatusBar("Enter=Save  Esc=Cancel", id="status")
+            yield HelpTip("[Tab] Next field  [Ctrl+D] Date picker  [Enter] Save  [Esc] Cancel", id="help")
+            yield StatusBar("Ctrl+D=Date Picker  Enter=Save  Esc=Cancel", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -667,14 +671,58 @@ class TransactionAddScreen(Screen):
             self.query_one("#tx_primary_select", Select).clear()
             self.query_one("#tx_secondary_select", Select).clear()
 
+    def action_toggle_date_picker(self):
+        scroll = self.query_one(".form_scroll", VerticalScroll)
+        existing = list(scroll.query("JalaliDatePicker"))
+        if existing:
+            for picker in existing:
+                picker.remove()
+            date_input = self.query_one("#tx_date", Input)
+            date_input.focus()
+        else:
+            date_input = self.query_one("#tx_date", Input)
+            picker = JalaliDatePicker(id="tx_date_picker")
+            if date_input.value:
+                try:
+                    parts = date_input.value.strip().split("-")
+                    if len(parts) == 3:
+                        g_date = date(int(parts[0]), int(parts[1]), int(parts[2]))
+                        j_date = jdatetime.date.fromgregorian(date=g_date)
+                        picker.year = j_date.year
+                        picker.month = j_date.month
+                        picker.day = j_date.day
+                except Exception:
+                    pass
+            scroll.mount(picker, before=scroll.children[0] if scroll.children else None)
+            picker.focus()
+
+    def on_key(self, event):
+        if event.key == "enter":
+            focused = self.app.focused
+            if focused and focused.id in {"tx_date_picker", "picker_year", "picker_month", "picker_day"}:
+                event.stop()
+                picker = self.query_one("#tx_date_picker", JalaliDatePicker)
+                self.query_one("#tx_date", Input).value = picker.get_jalali_date()
+                picker.remove()
+                self.query_one("#tx_amount", Input).focus()
+            elif focused and focused.id == "save":
+                event.stop()
+                self.save()
+            elif focused and focused.id == "cancel":
+                event.stop()
+                self.action_go_back()
+
     def action_go_back(self):
         self.app.pop_screen()
 
 
 class TransactionEditScreen(Screen):
     """Edit transaction screen."""
-    
-    BINDINGS = [Binding("escape", "go_back", "Back")]
+
+    BINDINGS = [
+        Binding("escape", "go_back", "Back"),
+        Binding("ctrl+d", "toggle_date_picker", "Date Picker"),
+    ]
 
     def __init__(self, tx_id: int, record_type: str = "transaction", on_save=None, **kwargs):
         self.tx_id = tx_id
@@ -686,7 +734,7 @@ class TransactionEditScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(classes="form_panel"):
+        with Container(classes="form_panel center_screen"):
             yield Label("EDIT TRANSACTION", classes="menu_header")
             yield Rule()
             with VerticalScroll(classes="form_scroll"):
@@ -713,8 +761,8 @@ class TransactionEditScreen(Screen):
                 yield Button("Save", variant="primary", id="save")
                 yield Button("Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
-            yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
-            yield StatusBar("Enter=Save  Esc=Cancel", id="status")
+            yield HelpTip("[Tab] Next field  [Ctrl+D] Date picker  [Enter] Save  [Esc] Cancel", id="help")
+            yield StatusBar("Ctrl+D=Date Picker  Enter=Save  Esc=Cancel", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -818,6 +866,47 @@ class TransactionEditScreen(Screen):
             primary_select.clear()
             secondary_select.clear()
 
+    def action_toggle_date_picker(self):
+        scroll = self.query_one(".form_scroll", VerticalScroll)
+        existing = list(scroll.query("JalaliDatePicker"))
+        if existing:
+            for picker in existing:
+                picker.remove()
+            date_input = self.query_one("#tx_date", Input)
+            date_input.focus()
+        else:
+            date_input = self.query_one("#tx_date", Input)
+            picker = JalaliDatePicker(id="tx_date_picker")
+            if date_input.value:
+                try:
+                    parts = date_input.value.strip().split("-")
+                    if len(parts) == 3:
+                        g_date = date(int(parts[0]), int(parts[1]), int(parts[2]))
+                        j_date = jdatetime.date.fromgregorian(date=g_date)
+                        picker.year = j_date.year
+                        picker.month = j_date.month
+                        picker.day = j_date.day
+                except Exception:
+                    pass
+            scroll.mount(picker, before=scroll.children[0] if scroll.children else None)
+            picker.focus()
+
+    def on_key(self, event):
+        if event.key == "enter":
+            focused = self.app.focused
+            if focused and focused.id in {"tx_date_picker", "picker_year", "picker_month", "picker_day"}:
+                event.stop()
+                picker = self.query_one("#tx_date_picker", JalaliDatePicker)
+                self.query_one("#tx_date", Input).value = picker.get_jalali_date()
+                picker.remove()
+                self.query_one("#tx_amount", Input).focus()
+            elif focused and focused.id == "save":
+                event.stop()
+                self.save()
+            elif focused and focused.id == "cancel":
+                event.stop()
+                self.action_go_back()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
             self.save()
@@ -872,14 +961,14 @@ class TransactionEditScreen(Screen):
             payload["category_id"] = primary_value
             if secondary_value is not None and secondary_value != Select.BLANK:
                 payload["source_id"] = secondary_value
-        
+
         resp = api_put(
             f"/transactions/{self.tx_id}?record_type={self.record_type}",
             payload,
             username=self.app.user.get("username"),
         )
         data, err = handle_response(resp)
-        
+
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
         else:

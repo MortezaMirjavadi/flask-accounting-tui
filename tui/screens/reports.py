@@ -23,7 +23,7 @@ class ReportsScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(classes="main_panel"):
+        with Container(classes="main_panel center_screen"):
             yield Label("REPORTS", classes="menu_header")
             yield Static("-" * 50, classes="separator")
             yield ListView(
@@ -79,7 +79,7 @@ class AdvancedReportScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Container(classes="wide_panel"):
+        with Container(classes="wide_panel center_screen"):
             yield Label("ADVANCED REPORTS", classes="menu_header")
             yield Static(id="report_title")
             yield Static(id="report_body")
