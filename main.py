@@ -8,7 +8,7 @@ from datetime import date, timedelta
 
 from textual.app import App
 
-from database import get_connection, init_db
+from database import get_connection, release_connection, init_db
 from tui.calendar_view import CalendarScreen
 
 
@@ -17,25 +17,26 @@ def _get_or_create_user(username: str) -> int:
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+        cursor.execute("SELECT id FROM users WHERE username = %s", (username,))
         existing = cursor.fetchone()
         if existing is not None:
             return int(existing["id"])
 
         password_hash = "demo"
         cursor.execute(
-            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+            "INSERT INTO users (username, password_hash) VALUES (%s, %s) RETURNING id",
             (username, password_hash),
         )
         conn.commit()
-        return int(cursor.lastrowid)
+        return int(cursor.fetchone()['id'])
     finally:
-        conn.close()
+        cursor.close()
+        release_connection(conn)
 
 
 def _ensure_category(cursor, user_id: int, name: str, category_type: str) -> int:
     cursor.execute(
-        "SELECT id FROM categories WHERE user_id = ? AND name = ? AND deleted_at IS NULL",
+        "SELECT id FROM categories WHERE user_id = %s AND name = %s AND deleted_at IS NULL",
         (user_id, name),
     )
     row = cursor.fetchone()
@@ -43,15 +44,15 @@ def _ensure_category(cursor, user_id: int, name: str, category_type: str) -> int
         return int(row["id"])
 
     cursor.execute(
-        "INSERT INTO categories (user_id, name, type) VALUES (?, ?, ?)",
+        "INSERT INTO categories (user_id, name, type) VALUES (%s, %s, %s)",
         (user_id, name, category_type),
     )
-    return int(cursor.lastrowid)
+    return int(cursor.fetchone()['id'])
 
 
 def _ensure_source(cursor, user_id: int, name: str, amount: float) -> int:
     cursor.execute(
-        "SELECT id FROM sources WHERE user_id = ? AND name = ? AND deleted_at IS NULL",
+        "SELECT id FROM sources WHERE user_id = %s AND name = %s AND deleted_at IS NULL",
         (user_id, name),
     )
     row = cursor.fetchone()
@@ -59,15 +60,15 @@ def _ensure_source(cursor, user_id: int, name: str, amount: float) -> int:
         return int(row["id"])
 
     cursor.execute(
-        "INSERT INTO sources (user_id, name, amount) VALUES (?, ?, ?)",
+        "INSERT INTO sources (user_id, name, amount) VALUES (%s, %s, %s)",
         (user_id, name, amount),
     )
-    return int(cursor.lastrowid)
+    return int(cursor.fetchone()['id'])
 
 
 def _seed_transactions(cursor, user_id: int, salary_category_id: int, cost_category_id: int, source_id: int) -> None:
     cursor.execute(
-        "SELECT 1 FROM transactions WHERE user_id = ? AND date = ? AND amount = ? AND category_id = ? LIMIT 1",
+        "SELECT 1 FROM transactions WHERE user_id = %s AND date = %s AND amount = %s AND category_id = %s LIMIT 1",
         (user_id, (date.today() - timedelta(days=1)).isoformat(), 900000, salary_category_id),
     )
     if cursor.fetchone() is not None:
@@ -100,19 +101,19 @@ def _seed_transactions(cursor, user_id: int, salary_category_id: int, cost_categ
     )
 
     cursor.executemany(
-        "INSERT INTO transactions (user_id, date, amount, category_id, source_id, description) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO transactions (user_id, date, amount, category_id, source_id, description) VALUES (%s, %s, %s, %s, %s, %s)",
         sample_rows,
     )
 
     # Apply source effects once to keep balances consistent with transaction history.
     cursor.execute(
-        "SELECT COALESCE(SUM(amount), 0) AS total FROM transactions WHERE user_id = ?",
+        "SELECT COALESCE(SUM(amount), 0) AS total FROM transactions WHERE user_id = %s",
         (user_id,),
     )
     # Keep source in sync with historical fixture so forecast starts from realistic balance.
     total = float(cursor.fetchone()["total"] or 0.0)
     cursor.execute(
-        "UPDATE sources SET amount = amount + ? WHERE id = ? AND user_id = ?",
+        "UPDATE sources SET amount = amount + %s WHERE id = %s AND user_id = %s",
         (total, source_id, user_id),
     )
 
@@ -120,7 +121,7 @@ def _seed_transactions(cursor, user_id: int, salary_category_id: int, cost_categ
 def _seed_financial_events(cursor, user_id: int, categories: dict[str, int], source_id: int) -> None:
     from services.calendar_service import CalendarService
 
-    cursor.execute("SELECT 1 FROM financial_events WHERE user_id = ? AND title = ? LIMIT 1", (user_id, "Salary"))
+    cursor.execute("SELECT 1 FROM financial_events WHERE user_id = %s AND title = %s LIMIT 1", (user_id, "Salary"))
     if cursor.fetchone() is not None:
         return
 
@@ -230,7 +231,8 @@ def seed_demo_data(user_id: int) -> None:
 
         conn.commit()
     finally:
-        conn.close()
+        cursor.close()
+        release_connection(conn)
 
 
 class _CalendarApp(App):

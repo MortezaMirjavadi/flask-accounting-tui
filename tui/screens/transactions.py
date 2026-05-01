@@ -364,7 +364,7 @@ class TransactionByCategoryScreen(Screen):
             cat_name = group["title"]
             cat_type = group["type"]
             cat_txs = group["transactions"]
-            total = sum(t.get("amount", 0) for t in cat_txs)
+            total = sum(self._to_amount_value(t.get("amount", 0)) for t in cat_txs)
 
             is_selected = self._mode == "category" and self._selected_category_idx == cat_idx
             marker = ">" if is_selected else " "
@@ -391,6 +391,13 @@ class TransactionByCategoryScreen(Screen):
             lines.append("")
 
         content.update("\n".join(lines))
+
+    @staticmethod
+    def _to_amount_value(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
 
     def on_key(self, event):
         key = event.key

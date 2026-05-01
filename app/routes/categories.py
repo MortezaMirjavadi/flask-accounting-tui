@@ -1,8 +1,8 @@
-import sqlite3
+import psycopg2
 from flask import Blueprint, request, jsonify
 from app.utils.helpers import get_user_id_from_request, row_to_dict
 from app.models import validate_category_payload
-from database import get_connection
+from database import get_connection, release_connection
 
 bp = Blueprint('categories', __name__)
 
@@ -19,21 +19,24 @@ def list_categories():
     conn = get_connection()
     cursor = conn.cursor()
     
-    query = "SELECT * FROM categories WHERE user_id = ? AND deleted_at IS NULL"
-    params = [user_id]
-    
-    if name_filter:
-        query += " AND name LIKE ?"
-        params.append(f"%{name_filter}%")
-    if type_filter:
-        query += " AND type = ?"
-        params.append(type_filter)
-    
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    conn.close()
-    
-    return jsonify([row_to_dict(r) for r in rows])
+    try:
+        query = "SELECT * FROM categories WHERE user_id = %s AND deleted_at IS NULL"
+        params = [user_id]
+        
+        if name_filter:
+            query += " AND name LIKE %s"
+            params.append(f"%{name_filter}%")
+        if type_filter:
+            query += " AND type = %s"
+            params.append(type_filter)
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        
+        return jsonify([row_to_dict(r) for r in rows])
+    finally:
+        cursor.close()
+        release_connection(conn)
 
 
 @bp.route("", methods=["POST"])
@@ -53,28 +56,30 @@ def create_category():
     
     try:
         cursor.execute(
-            "INSERT INTO categories (user_id, name, type) VALUES (?, ?, ?)",
+            "INSERT INTO categories (user_id, name, type) VALUES (%s, %s, %s) RETURNING id",
             (user_id, payload["name"], payload["type"]),
         )
+        new_id = cursor.fetchone()['id']
         conn.commit()
-        new_id = cursor.lastrowid
-    except sqlite3.IntegrityError as exc:
+    except psycopg2.IntegrityError as exc:
+        conn.rollback()
         cursor.execute(
-            "SELECT id FROM categories WHERE user_id = ? AND name = ? AND deleted_at IS NOT NULL",
+            "SELECT id FROM categories WHERE user_id = %s AND name = %s AND deleted_at IS NOT NULL",
             (user_id, payload["name"]),
         )
         archived = cursor.fetchone()
         if archived is None:
-            conn.close()
             return jsonify({"error": str(exc)}), 400
         cursor.execute(
-            "UPDATE categories SET type = ?, deleted_at = NULL WHERE id = ?",
+            "UPDATE categories SET type = %s, deleted_at = NULL WHERE id = %s",
             (payload["type"], archived["id"]),
         )
         conn.commit()
         new_id = archived["id"]
+    finally:
+        cursor.close()
+        release_connection(conn)
     
-    conn.close()
     return jsonify({"id": new_id, **payload}), 201
 
 
@@ -86,17 +91,21 @@ def get_category(cat_id):
     
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT * FROM categories WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
-        (cat_id, user_id)
-    )
-    row = cursor.fetchone()
-    conn.close()
     
-    if row is None:
-        return jsonify({"error": "Category not found"}), 404
-    
-    return jsonify(row_to_dict(row))
+    try:
+        cursor.execute(
+            "SELECT * FROM categories WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
+            (cat_id, user_id)
+        )
+        row = cursor.fetchone()
+        
+        if row is None:
+            return jsonify({"error": "Category not found"}), 404
+        
+        return jsonify(row_to_dict(row))
+    finally:
+        cursor.close()
+        release_connection(conn)
 
 
 @bp.route("/<int:cat_id>", methods=["PUT"])
@@ -114,25 +123,26 @@ def update_category(cat_id):
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute(
-        "SELECT id FROM categories WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
-        (cat_id, user_id)
-    )
-    if cursor.fetchone() is None:
-        conn.close()
-        return jsonify({"error": "Category not found"}), 404
-    
     try:
         cursor.execute(
-            "UPDATE categories SET name = ?, type = ? WHERE id = ? AND user_id = ?",
+            "SELECT id FROM categories WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
+            (cat_id, user_id)
+        )
+        if cursor.fetchone() is None:
+            return jsonify({"error": "Category not found"}), 404
+        
+        cursor.execute(
+            "UPDATE categories SET name = %s, type = %s WHERE id = %s AND user_id = %s",
             (payload["name"], payload["type"], cat_id, user_id),
         )
         conn.commit()
-    except sqlite3.IntegrityError as exc:
-        conn.close()
+    except psycopg2.IntegrityError as exc:
+        conn.rollback()
         return jsonify({"error": str(exc)}), 400
+    finally:
+        cursor.close()
+        release_connection(conn)
     
-    conn.close()
     return jsonify({"id": cat_id, **payload})
 
 
@@ -145,19 +155,21 @@ def delete_category(cat_id):
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute(
-        "SELECT id FROM categories WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
-        (cat_id, user_id)
-    )
-    if cursor.fetchone() is None:
-        conn.close()
-        return jsonify({"error": "Category not found"}), 404
-    
-    cursor.execute(
-        "UPDATE categories SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
-        (cat_id, user_id),
-    )
-    conn.commit()
-    conn.close()
-    
-    return jsonify({"message": "Category archived"})
+    try:
+        cursor.execute(
+            "SELECT id FROM categories WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
+            (cat_id, user_id)
+        )
+        if cursor.fetchone() is None:
+            return jsonify({"error": "Category not found"}), 404
+        
+        cursor.execute(
+            "UPDATE categories SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
+            (cat_id, user_id),
+        )
+        conn.commit()
+        
+        return jsonify({"message": "Category archived"})
+    finally:
+        cursor.close()
+        release_connection(conn)

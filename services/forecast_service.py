@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
-from database import get_connection
+from database import get_connection, release_connection
 from app.services import reporting_service
 from services.calendar_service import CalendarService
 
@@ -60,6 +60,21 @@ def _parse_date(value: str) -> date:
     return datetime.strptime(value, "%Y-%m-%d").date()
 
 
+def _to_date_value(value):
+    """Coerce date-like DB values into a ``date`` instance."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        return _parse_date(value)
+    raise TypeError(f"Unsupported date value type: {type(value)!r}")
+
+
+def _to_float_amount(value) -> float:
+    return float(value if value is not None else 0.0)
+
+
 def _iso(dte: date) -> str:
     return dte.strftime("%Y-%m-%d")
 
@@ -108,10 +123,11 @@ class ForecastService:
             planned_out = trend.estimate_expense(current_day)
 
             for event in events_by_day.get(_iso(current_day), []):
+                amount = _to_float_amount(event.get("amount"))
                 if event["category_type"] == "income":
-                    planned_in += event["amount"]
+                    planned_in += amount
                 else:
-                    planned_out += event["amount"]
+                    planned_out += amount
 
             net = planned_in - planned_out
             balance += net
@@ -225,22 +241,31 @@ class ForecastService:
     def _group_events_by_day(events: list[dict]) -> dict[str, list[dict]]:
         grouped: dict[str, list[dict]] = {}
         for event in events:
-            grouped.setdefault(event["due_date"], []).append(event)
+            due_date = event.get("due_date")
+            if isinstance(due_date, datetime):
+                due_date = due_date.date()
+            due_key = due_date.strftime("%Y-%m-%d") if isinstance(due_date, date) else str(due_date)
+            grouped.setdefault(due_key, []).append(event)
         return grouped
 
     @staticmethod
     def get_current_balance(user_id: int) -> float:
-        conn = get_connection()
+        conn = None
+        cursor = None
         try:
+            conn = get_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT COALESCE(SUM(amount), 0) AS total FROM sources WHERE user_id = ? AND deleted_at IS NULL",
+                "SELECT COALESCE(SUM(amount), 0) AS total FROM sources WHERE user_id = %s AND deleted_at IS NULL",
                 (user_id,),
             )
             row = cursor.fetchone()
             return float(row["total"] if row else 0.0)
         finally:
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                release_connection(conn)
 
     @staticmethod
     def _build_historical_trend(user_id: int, months_back: int = 6) -> DailyTrend:
@@ -261,17 +286,24 @@ class ForecastService:
         expense_by_weekday: dict[int, list[float]] = {i: [] for i in range(7)}
         income_by_month: dict[int, list[float]] = {i: [] for i in range(1, 13)}
         expense_by_month: dict[int, list[float]] = {i: [] for i in range(1, 13)}
+        days_with_transactions: set[str] = set()
 
         for row in rows:
-            tx_day = datetime.strptime(row["date"], "%Y-%m-%d").date()
+            try:
+                tx_day = _to_date_value(row["date"])
+            except (TypeError, ValueError):
+                continue
+
+            amount = _to_float_amount(row["amount"])
             weekday = tx_day.weekday()
             month_no = tx_day.month
+            days_with_transactions.add(_iso(tx_day))
             if row["category_type"] == "income":
-                income_by_weekday[weekday].append(row["amount"])
-                income_by_month[month_no].append(row["amount"])
+                income_by_weekday[weekday].append(amount)
+                income_by_month[month_no].append(amount)
             else:
-                expense_by_weekday[weekday].append(row["amount"])
-                expense_by_month[month_no].append(row["amount"])
+                expense_by_weekday[weekday].append(amount)
+                expense_by_month[month_no].append(amount)
 
         weekday_income = {
             idx: ForecastService._weighted_moving_average(values)
@@ -290,9 +322,17 @@ class ForecastService:
             for idx, values in expense_by_month.items()
         }
 
-        total_income = sum(row["amount"] for row in rows if row["category_type"] == "income")
-        total_expense = sum(row["amount"] for row in rows if row["category_type"] == "cost")
-        day_count = max(1, len({row["date"] for row in rows}))
+        total_income = sum(
+            _to_float_amount(row["amount"])
+            for row in rows
+            if row["category_type"] == "income"
+        )
+        total_expense = sum(
+            _to_float_amount(row["amount"])
+            for row in rows
+            if row["category_type"] == "cost"
+        )
+        day_count = max(1, len(days_with_transactions))
 
         return DailyTrend(
             base_income=_safe_division(total_income, day_count),
@@ -316,25 +356,30 @@ class ForecastService:
 
     @staticmethod
     def _get_transactions(user_id: int, start: date, end: date) -> list[dict]:
-        conn = get_connection()
+        conn = None
+        cursor = None
         try:
+            conn = get_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """
                 SELECT t.date, t.amount, COALESCE(c.type, 'cost') AS category_type
                 FROM transactions t
                 JOIN categories c ON c.id = t.category_id
-                WHERE t.user_id = ?
+                WHERE t.user_id = %s
                   AND t.deleted_at IS NULL
-                  AND t.date >= ?
-                  AND t.date <= ?
+                  AND t.date >= %s
+                  AND t.date <= %s
                 ORDER BY t.date ASC
                 """,
                 (user_id, _iso(start), _iso(end)),
             )
             return [dict(row) for row in cursor.fetchall()]
         finally:
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                release_connection(conn)
 
     @staticmethod
     def _calculate_accuracy_score(user_id: int) -> float:
@@ -351,8 +396,16 @@ class ForecastService:
         test_rows = ForecastService._get_transactions(user_id, train_start, end_date)
         actual_by_day: dict[str, float] = {}
         for row in test_rows:
-            amount = row["amount"] if row["category_type"] == "income" else -row["amount"]
-            actual_by_day[row["date"]] = actual_by_day.get(row["date"], 0.0) + amount
+            try:
+                tx_day = _to_date_value(row["date"])
+            except (TypeError, ValueError):
+                continue
+
+            amount = _to_float_amount(row["amount"])
+            if row["category_type"] != "income":
+                amount = -amount
+            day_key = tx_day.strftime("%Y-%m-%d")
+            actual_by_day[day_key] = actual_by_day.get(day_key, 0.0) + amount
 
         errors: list[float] = []
         for day_delta in range(30):

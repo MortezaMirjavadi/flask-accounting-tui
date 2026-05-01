@@ -118,7 +118,10 @@ class AdvancedReportScreen(Screen):
         body = self.query_one("#report_body", Static)
 
         if self._view == "daily":
-            title.update(f"Daily Report — {self._report_data.get('date', '')}")
+            weekday = self._report_data.get("weekday", "")
+            date = self._report_data.get("date", "")
+            day_label = f" ({weekday})" if weekday else ""
+            title.update(f"Daily Report — {date}{day_label}")
             body.update(self._render_daily())
         elif self._view == "weekly":
             title.update(
@@ -175,9 +178,10 @@ class AdvancedReportScreen(Screen):
         
         for tx in recent[:5]:
             date_str = tx.get('date', '')
+            tx_weekday = tx.get('weekday', '')
             cat_name = str(tx.get('category_name', '-'))[:10]
             amount = format_toman(tx.get('amount', 0))
-            lines.append(self._make_row(f" {date_str:<10} {cat_name:<10} {amount}", width))
+            lines.append(self._make_row(f" {date_str:<10} {tx_weekday:<8} {cat_name:<9} {amount}", width))
             
         lines.append("└────────────────────────────────────────────┘")
         

@@ -1,6 +1,6 @@
 """Calendar screen for the main TUI application."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from calendar import monthrange
 
 import jdatetime
@@ -8,7 +8,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, Footer, Header, Input, Label, Select, Static
+from textual.widgets import Button, Footer, Header, Input, Label, Select, Static, Rule
 
 from services.alert_service import AlertService
 from services.calendar_service import CalendarService
@@ -39,6 +39,20 @@ def _gregorian_to_jalali(gregorian_text: str) -> str:
     return jalali_date.strftime("%Y-%m-%d")
 
 
+def _normalize_picker_date(value) -> str:
+    """Normalize optional date values for the date picker input."""
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d")
+    if isinstance(value, date):
+        return value.strftime("%Y-%m-%d")
+    if value is None:
+        return date.today().strftime("%Y-%m-%d")
+    try:
+        return str(value).strip()
+    except Exception:
+        return date.today().strftime("%Y-%m-%d")
+
+
 class EventFormScreen(ModalScreen[dict | None]):
     BINDINGS = [
         ("escape", "cancel", "Cancel"),
@@ -59,6 +73,7 @@ class EventFormScreen(ModalScreen[dict | None]):
             "end_date": "", "occurrence_limit": ""
         }
         defaults.update(self.payload)
+        defaults["start_date"] = _normalize_picker_date(defaults.get("start_date"))
 
         cat_options = [(f"{name} ({cat_type})", str(cat_id)) for cat_id, name, cat_type in self.categories]
         src_options = [(name, str(src_id)) for src_id, name in self.sources]
@@ -70,6 +85,7 @@ class EventFormScreen(ModalScreen[dict | None]):
         with Container(classes="form_panel center_screen"):
             with VerticalScroll(classes="form_scroll"):
                 yield Label("[b]Financial Event Editor[/b]")
+                yield Rule()
                 yield Input(id="title", placeholder="Title", value=defaults["title"])
                 yield Input(id="amount", placeholder="Amount", value=str(defaults["amount"]))
                 yield Select(
@@ -95,7 +111,7 @@ class EventFormScreen(ModalScreen[dict | None]):
         cat_select = self.query_one("#category_select", Select)
         category_id = cat_select.value if cat_select.value is not Select.NULL else ""
         src_select = self.query_one("#source_select", Select) if self.sources else None
-        source_id = src_select.value if src_select and src_select.value is not Select.NULL else None
+        source_id = src_select.value if src_select and src_select.value not in (None, "", Select.NULL) else None
         date_picker = self.query_one("#start_date_picker", JalaliDatePicker)
         gregorian_start = date_picker.get_gregorian_date()
         payload = {
@@ -136,7 +152,7 @@ class CalendarScreen(Screen):
         yield Header()
         with Container(classes="wide_panel center_screen"):
             yield Label("FINANCIAL CALENDAR", classes="menu_header")
-            yield Static("=" * 50, classes="separator")
+            yield Rule()
             with Horizontal(id="dashboard"):
                 yield Static(id="calendar_panel")
                 with Vertical(id="side_panel"):
@@ -149,14 +165,17 @@ class CalendarScreen(Screen):
         yield Footer()
 
     def on_mount(self):
-        from database import get_connection
+        from database import get_connection, release_connection
         conn = get_connection()
         c = conn.cursor()
-        c.execute("SELECT id, name, type FROM categories WHERE user_id = ? AND deleted_at IS NULL", (self.user_id,))
-        self._categories = [(r["id"], r["name"], r["type"]) for r in c.fetchall()]
-        c.execute("SELECT id, name FROM sources WHERE user_id = ? AND deleted_at IS NULL", (self.user_id,))
-        self._sources = [(r["id"], r["name"]) for r in c.fetchall()]
-        conn.close()
+        try:
+            c.execute("SELECT id, name, type FROM categories WHERE user_id = %s AND deleted_at IS NULL", (self.user_id,))
+            self._categories = [(r["id"], r["name"], r["type"]) for r in c.fetchall()]
+            c.execute("SELECT id, name FROM sources WHERE user_id = %s AND deleted_at IS NULL", (self.user_id,))
+            self._sources = [(r["id"], r["name"]) for r in c.fetchall()]
+        finally:
+            c.close()
+        release_connection(conn)
         self.refresh_data()
 
     def refresh_data(self):
@@ -189,7 +208,10 @@ class CalendarScreen(Screen):
 
         by_date = {}
         for i in self.instances:
-            by_date.setdefault(i["due_date"], []).append(i)
+            due_key = i["due_date"]
+            if hasattr(due_key, "strftime"):
+                due_key = due_key.strftime("%Y-%m-%d")
+            by_date.setdefault(due_key, []).append(i)
 
         curr = self._view_range()[0]
         while curr <= self._view_range()[1]:

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import sqlite3
+import psycopg2
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Iterable, Optional
 
-from database import get_connection
+from database import get_connection, release_connection
 
 
 ALLOWED_FREQUENCIES = ("once", "daily", "weekly", "monthly", "yearly")
@@ -66,9 +66,17 @@ def _iso(dte: date) -> str:
     return dte.strftime("%Y-%m-%d")
 
 
-def _to_date(value: str) -> date:
-    """Parse a YYYY-MM-DD date string into a date."""
-    return datetime.strptime(value, "%Y-%m-%d").date()
+def _to_date(value) -> date:
+    """Normalize date-like values into a :class:`datetime.date`."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        return datetime.strptime(value.strip(), "%Y-%m-%d").date()
+    if value is None:
+        raise TypeError("Date value is required")
+    raise TypeError(f"Unsupported date value type: {type(value)!r}")
 
 
 def _add_months(value: date, step: int) -> date:
@@ -90,7 +98,7 @@ class CalendarService:
     """High-level CRUD + recurrence operations for financial calendar events."""
 
     @staticmethod
-    def get_balance_sources(conn: sqlite3.Connection) -> list[tuple]:
+    def get_balance_sources(conn: psycopg2.extensions.connection) -> list[tuple]:
         cursor = conn.cursor()
         cursor.execute("SELECT id, name, amount FROM sources WHERE deleted_at IS NULL")
         return [(row["id"], row["name"], row["amount"] or 0.0) for row in cursor.fetchall()]
@@ -98,7 +106,7 @@ class CalendarService:
     @staticmethod
     def get_active_category(cursor, category_id: int, user_id: int):
         cursor.execute(
-            "SELECT id, type, name FROM categories WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+            "SELECT id, type, name FROM categories WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
             (category_id, user_id),
         )
         return cursor.fetchone()
@@ -106,7 +114,7 @@ class CalendarService:
     @staticmethod
     def get_active_source(cursor, source_id: int, user_id: int):
         cursor.execute(
-            "SELECT id, amount, name FROM sources WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+            "SELECT id, amount, name FROM sources WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
             (source_id, user_id),
         )
         return cursor.fetchone()
@@ -120,8 +128,9 @@ class CalendarService:
         source_id = payload.get("source_id")
         frequency = (payload.get("frequency") or "once").strip().lower()
         repeat_interval = payload.get("repeat_interval", 1)
-        start_date = (payload.get("start_date") or "").strip()
-        end_date = (payload.get("end_date") or "").strip() or None
+        start_raw = payload.get("start_date")
+        end_raw = payload.get("end_date")
+        end_date = None
         occurrence_limit = payload.get("occurrence_limit")
 
         if not title:
@@ -146,12 +155,13 @@ class CalendarService:
                 raise ValueError("source_id must be an integer")
             # Existence check only. Balance sufficiency is validated at confirm time.
             conn = get_connection()
+            cursor = conn.cursor()
             try:
-                cursor = conn.cursor()
                 if CalendarService.get_active_source(cursor, source_id, user_id) is None:
                     raise ValueError("Source does not exist")
             finally:
-                conn.close()
+                cursor.close()
+                release_connection(conn)
 
         if frequency not in ALLOWED_FREQUENCIES:
             raise ValueError(f"frequency must be one of: {', '.join(ALLOWED_FREQUENCIES)}")
@@ -166,8 +176,8 @@ class CalendarService:
         if frequency == "once":
             repeat_interval = 1
         try:
-            start = _to_date(start_date)
-        except ValueError as exc:
+            start = _to_date(start_raw)
+        except (TypeError, ValueError) as exc:
             raise ValueError("start_date must be in YYYY-MM-DD format") from exc
 
         today = date.today()
@@ -177,11 +187,12 @@ class CalendarService:
         if frequency != "once" and not description:
             raise ValueError("description is required for recurring events")
 
-        if end_date:
+        if end_raw:
             try:
-                end = _to_date(end_date)
-            except ValueError as exc:
+                end = _to_date(end_raw)
+            except (TypeError, ValueError) as exc:
                 raise ValueError("end_date must be in YYYY-MM-DD format") from exc
+            end_date = end.strftime("%Y-%m-%d")
             if end < start:
                 raise ValueError("end_date cannot be before start_date")
 
@@ -213,7 +224,8 @@ class CalendarService:
                 occurrence_limit=occurrence_limit,
             )
         finally:
-            conn.close()
+            cursor.close()
+        release_connection(conn)
 
     @staticmethod
     def create_event(user_id: int, payload: dict) -> tuple[dict, list[dict]]:
@@ -237,7 +249,7 @@ class CalendarService:
                 INSERT INTO financial_events (
                     user_id, title, description, amount, category_id, source_id,
                     frequency, repeat_interval, start_date, end_date, occurrence_limit
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
                 """,
                 (
                     user_id,
@@ -253,7 +265,7 @@ class CalendarService:
                     data.occurrence_limit,
                 ),
             )
-            event_id = cursor.lastrowid
+            event_id = cursor.fetchone()['id']
             conn.commit()
             CalendarService._generate_instances_for_event(
                 cursor, event_id, user_id, _to_date(data.start_date), horizon_days=365
@@ -280,7 +292,8 @@ class CalendarService:
                 "status": event["status"],
             }, [i for i in instances if i["event_id"] == event_id]
         finally:
-            conn.close()
+            cursor.close()
+        release_connection(conn)
 
     @staticmethod
     def _has_conflicting_instance(
@@ -291,14 +304,14 @@ class CalendarService:
             SELECT 1
             FROM financial_event_instances i
             JOIN financial_events e ON e.id = i.event_id
-            WHERE i.user_id = ?
-              AND i.due_date = ?
+            WHERE i.user_id = %s
+              AND i.due_date = %s
               AND i.status IN ('pending', 'snoozed')
               AND e.status = 'active'
-              AND e.title = ?
-              AND ROUND(e.amount, 2) = ROUND(?, 2)
+              AND e.title = %s
+              AND ROUND(e.amount, 2) = ROUND(%s, 2)
               AND e.deleted_at IS NULL
-              AND (? IS NULL OR e.id != ?)
+              AND (%s IS NULL OR e.id != %s)
               LIMIT 1
             """,
             (user_id, due_date, title, amount, exclude_event_id, exclude_event_id),
@@ -312,7 +325,7 @@ class CalendarService:
             SELECT id, user_id, title, description, amount, category_id, source_id,
                    frequency, repeat_interval, start_date, end_date, occurrence_limit, status
             FROM financial_events
-            WHERE id = ? AND user_id = ? AND deleted_at IS NULL
+            WHERE id = %s AND user_id = %s AND deleted_at IS NULL
             """,
             (event_id, user_id),
         )
@@ -327,7 +340,8 @@ class CalendarService:
             row = CalendarService._fetch_event(cursor, event_id, user_id)
             return dict(row) if row else None
         finally:
-            conn.close()
+            cursor.close()
+        release_connection(conn)
 
     @staticmethod
     def get_user_events(user_id: int, include_inactive=False) -> list[dict]:
@@ -338,7 +352,7 @@ class CalendarService:
                 SELECT id, user_id, title, description, amount, category_id, source_id,
                        frequency, repeat_interval, start_date, end_date, occurrence_limit, status
                 FROM financial_events
-                WHERE user_id = ? AND deleted_at IS NULL
+                WHERE user_id = %s AND deleted_at IS NULL
             """
             if not include_inactive:
                 sql += " AND status = 'active'"
@@ -346,7 +360,8 @@ class CalendarService:
             cursor.execute(sql, (user_id,))
             return [dict(row) for row in cursor.fetchall()]
         finally:
-            conn.close()
+            cursor.close()
+        release_connection(conn)
 
     @staticmethod
     def get_instances(
@@ -355,9 +370,11 @@ class CalendarService:
         end_date: Optional[str] = None,
         include_cancelled: bool = False,
     ) -> list[dict]:
-        conn = get_connection()
-        cursor = conn.cursor()
+        conn = None
+        cursor = None
         try:
+            conn = get_connection()
+            cursor = conn.cursor()
             if start_date is None:
                 start_date = date.today().strftime("%Y-%m-%d")
             if end_date is None:
@@ -367,7 +384,7 @@ class CalendarService:
             if include_cancelled:
                 statuses = ("pending", "snoozed", "confirmed", "cancelled", "skipped")
 
-            placeholders = ",".join("?" for _ in statuses)
+            placeholders = ",".join("%s" for _ in statuses)
             cursor.execute(
                 f"""
                 SELECT
@@ -388,9 +405,9 @@ class CalendarService:
                 FROM financial_event_instances i
                 JOIN financial_events e ON e.id = i.event_id
                 JOIN categories c ON c.id = e.category_id
-                WHERE i.user_id = ?
-                  AND i.due_date >= ?
-                  AND i.due_date <= ?
+                WHERE i.user_id = %s
+                  AND i.due_date >= %s
+                  AND i.due_date <= %s
                   AND i.status IN ({placeholders})
                   AND e.status = 'active'
                   AND e.deleted_at IS NULL
@@ -417,8 +434,15 @@ class CalendarService:
                 }
                 for row in cursor.fetchall()
             ]
+        except Exception:
+            if conn is not None:
+                conn.rollback()
+            raise
         finally:
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                release_connection(conn)
 
     @staticmethod
     def get_instance(instance_id: int, user_id: int) -> dict | None:
@@ -445,14 +469,15 @@ class CalendarService:
                 FROM financial_event_instances i
                 JOIN financial_events e ON e.id = i.event_id
                 JOIN categories c ON c.id = e.category_id
-                WHERE i.id = ? AND i.user_id = ? 
+                WHERE i.id = %s AND i.user_id = %s 
                 """,
                 (instance_id, user_id),
             )
             row = cursor.fetchone()
             return dict(row) if row else None
         finally:
-            conn.close()
+            cursor.close()
+        release_connection(conn)
 
     @staticmethod
     def update_event(event_id: int, user_id: int, payload: dict) -> dict:
@@ -479,10 +504,10 @@ class CalendarService:
             cursor.execute(
                 """
                 UPDATE financial_events
-                SET title = ?, description = ?, amount = ?, category_id = ?, source_id = ?,
-                    frequency = ?, repeat_interval = ?, start_date = ?, end_date = ?, occurrence_limit = ?,
-                    last_modified_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND user_id = ?
+                SET title = %s, description = %s, amount = %s, category_id = %s, source_id = %s,
+                    frequency = %s, repeat_interval = %s, start_date = %s, end_date = %s, occurrence_limit = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND user_id = %s
                 """,
                 (
                     data.title,
@@ -502,8 +527,8 @@ class CalendarService:
             cursor.execute(
                 """
                 UPDATE financial_event_instances
-                SET status = 'cancelled', last_modified_at = CURRENT_TIMESTAMP
-                WHERE event_id = ? AND status IN ('pending', 'snoozed')
+                SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+                WHERE event_id = %s AND status IN ('pending', 'snoozed')
                 """,
                 (event_id,),
             )
@@ -527,7 +552,8 @@ class CalendarService:
                 "status": updated["status"],
             }
         finally:
-            conn.close()
+            cursor.close()
+        release_connection(conn)
 
     @staticmethod
     def cancel_event(event_id: int, user_id: int) -> bool:
@@ -535,7 +561,7 @@ class CalendarService:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "SELECT id FROM financial_events WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+                "SELECT id FROM financial_events WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
                 (event_id, user_id),
             )
             if cursor.fetchone() is None:
@@ -543,23 +569,24 @@ class CalendarService:
             cursor.execute(
                 """
                 UPDATE financial_events
-                SET status = 'cancelled', last_modified_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND user_id = ?
+                SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND user_id = %s
                 """,
                 (event_id, user_id),
             )
             cursor.execute(
                 """
                 UPDATE financial_event_instances
-                SET status = 'cancelled', last_modified_at = CURRENT_TIMESTAMP
-                WHERE event_id = ? AND status IN ('pending', 'snoozed')
+                SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+                WHERE event_id = %s AND status IN ('pending', 'snoozed')
                 """,
                 (event_id,),
             )
             conn.commit()
             return True
         finally:
-            conn.close()
+            cursor.close()
+        release_connection(conn)
 
     @staticmethod
     def delete_event(event_id: int, user_id: int) -> bool:
@@ -567,23 +594,25 @@ class CalendarService:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "UPDATE financial_events SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+                "UPDATE financial_events SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
                 (event_id, user_id),
             )
             updated = cursor.rowcount
             if not updated:
-                conn.close()
+                cursor.close()
+                release_connection(conn)
                 return False
 
             cursor.execute(
-                "UPDATE financial_event_instances SET status = 'cancelled', last_modified_at = CURRENT_TIMESTAMP "
-                "WHERE event_id = ? AND status IN ('pending', 'snoozed')",
+                "UPDATE financial_event_instances SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP "
+                "WHERE event_id = %s AND status IN ('pending', 'snoozed')",
                 (event_id,),
             )
             conn.commit()
             return True
         finally:
-            conn.close()
+            cursor.close()
+        release_connection(conn)
 
     @staticmethod
     def pause_event(event_id: int, user_id: int) -> bool:
@@ -593,8 +622,8 @@ class CalendarService:
             cursor.execute(
                 """
                 UPDATE financial_events
-                SET status = 'paused', last_modified_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND user_id = ? AND status = 'active' AND deleted_at IS NULL
+                SET status = 'paused', updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND user_id = %s AND status = 'active' AND deleted_at IS NULL
                 """,
                 (event_id, user_id),
             )
@@ -603,15 +632,16 @@ class CalendarService:
             cursor.execute(
                 """
                 UPDATE financial_event_instances
-                SET status = 'cancelled', last_modified_at = CURRENT_TIMESTAMP
-                WHERE event_id = ? AND status IN ('pending', 'snoozed')
+                SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+                WHERE event_id = %s AND status IN ('pending', 'snoozed')
                 """,
                 (event_id,),
             )
             conn.commit()
             return True
         finally:
-            conn.close()
+            cursor.close()
+        release_connection(conn)
 
     @staticmethod
     def resume_event(event_id: int, user_id: int) -> bool:
@@ -621,8 +651,8 @@ class CalendarService:
             cursor.execute(
                 """
                 UPDATE financial_events
-                SET status = 'active', last_modified_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND user_id = ? AND status = 'paused' AND deleted_at IS NULL
+                SET status = 'active', updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND user_id = %s AND status = 'paused' AND deleted_at IS NULL
                 """,
                 (event_id, user_id),
             )
@@ -639,7 +669,8 @@ class CalendarService:
             conn.commit()
             return True
         finally:
-            conn.close()
+            cursor.close()
+        release_connection(conn)
 
     @staticmethod
     def snooze_instance(instance_id: int, user_id: int, new_due_date: str) -> dict:
@@ -673,8 +704,8 @@ class CalendarService:
             cursor.execute(
                 """
                 UPDATE financial_event_instances
-                SET due_date = ?, status = 'snoozed', snoozed_from = due_date, last_modified_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND user_id = ?
+                SET due_date = %s, status = 'snoozed', snoozed_from = due_date, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND user_id = %s
                 """,
                 (new_due_date, instance_id, user_id),
             )
@@ -682,7 +713,8 @@ class CalendarService:
 
             return CalendarService.get_instance(instance_id, user_id)
         finally:
-            conn.close()
+            cursor.close()
+        release_connection(conn)
 
     @staticmethod
     def cancel_instance(instance_id: int, user_id: int) -> bool:
@@ -692,8 +724,8 @@ class CalendarService:
             cursor.execute(
                 """
                 UPDATE financial_event_instances
-                SET status = 'cancelled', last_modified_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND user_id = ? AND status IN ('pending', 'snoozed')
+                SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND user_id = %s AND status IN ('pending', 'snoozed')
                 """,
                 (instance_id, user_id),
             )
@@ -701,7 +733,8 @@ class CalendarService:
             conn.commit()
             return updated > 0
         finally:
-            conn.close()
+            cursor.close()
+        release_connection(conn)
 
     @staticmethod
     def confirm_instance(instance_id: int, user_id: int) -> dict:
@@ -724,7 +757,7 @@ class CalendarService:
                 FROM financial_event_instances i
                 JOIN financial_events e ON e.id = i.event_id
                 JOIN categories c ON c.id = e.category_id
-                WHERE i.id = ? AND i.user_id = ? AND i.transaction_id IS NULL
+                WHERE i.id = %s AND i.user_id = %s AND i.transaction_id IS NULL
                 """,
                 (instance_id, user_id),
             )
@@ -737,7 +770,7 @@ class CalendarService:
 
             if row["category_type"] == "cost" and row["source_id"] is not None:
                 cursor.execute(
-                    "SELECT amount FROM sources WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+                    "SELECT amount FROM sources WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
                     (row["source_id"], user_id),
                 )
                 source = cursor.fetchone()
@@ -749,7 +782,7 @@ class CalendarService:
             cursor.execute(
                 """
                 INSERT INTO transactions (user_id, date, amount, category_id, source_id, description)
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
                 """,
                 (
                     user_id,
@@ -760,14 +793,14 @@ class CalendarService:
                     f"{row['title']} (Paid via calendar)",
                 ),
             )
-            tx_id = cursor.lastrowid
+            tx_id = cursor.fetchone()['id']
 
             if row["source_id"] is not None:
                 cursor.execute(
                     """
                     UPDATE sources
-                    SET amount = amount + ?
-                    WHERE id = ? AND user_id = ?
+                    SET amount = amount + %s
+                    WHERE id = %s AND user_id = %s
                     """,
                     (
                         row["amount"] if row["category_type"] == "income" else -row["amount"],
@@ -779,8 +812,8 @@ class CalendarService:
             cursor.execute(
                 """
                 UPDATE financial_event_instances
-                SET status = 'confirmed', transaction_id = ?, last_modified_at = CURRENT_TIMESTAMP
-                WHERE id = ?
+                SET status = 'confirmed', transaction_id = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
                 """,
                 (tx_id, instance_id),
             )
@@ -793,20 +826,23 @@ class CalendarService:
                 "date": row["due_date"],
             }
         finally:
-            conn.close()
+            cursor.close()
+        release_connection(conn)
 
     @staticmethod
     def ensure_instances(user_id: int, horizon_days: int = 365) -> int:
         """Generate missing future instances for all active events."""
         created = 0
-        conn = get_connection()
-        cursor = conn.cursor()
+        conn = None
+        cursor = None
         today = date.today()
         try:
+            conn = get_connection()
+            cursor = conn.cursor()
             cursor.execute(
                 """
                 SELECT * FROM financial_events
-                WHERE user_id = ? AND status = 'active' AND deleted_at IS NULL
+                WHERE user_id = %s AND status = 'active' AND deleted_at IS NULL
                 """,
                 (user_id,),
             )
@@ -815,8 +851,15 @@ class CalendarService:
                 created += count_before
             conn.commit()
             return created
+        except Exception:
+            if conn is not None:
+                conn.rollback()
+            raise
         finally:
-            conn.close()
+            if cursor is not None:
+                cursor.close()
+            if conn is not None:
+                release_connection(conn)
 
     @staticmethod
     def _generate_instances_for_event(
@@ -827,7 +870,7 @@ class CalendarService:
         horizon_days: int = 365,
     ) -> int:
         cursor.execute(
-            "SELECT * FROM financial_events WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+            "SELECT * FROM financial_events WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
             (event_id, user_id),
         )
         event = cursor.fetchone()
@@ -864,7 +907,7 @@ class CalendarService:
             cursor.execute(
                 """
                 INSERT INTO financial_event_instances (event_id, user_id, due_date)
-                VALUES (?, ?, ?)
+                VALUES (%s, %s, %s) RETURNING id
                 """,
                 (event_id, user_id, due.strftime("%Y-%m-%d")),
             )
@@ -911,7 +954,7 @@ class CalendarService:
     @staticmethod
     def _instance_exists(cursor, event_id: int, due_date: str) -> bool:
         cursor.execute(
-            "SELECT 1 FROM financial_event_instances WHERE event_id = ? AND due_date = ? LIMIT 1",
+            "SELECT 1 FROM financial_event_instances WHERE event_id = %s AND due_date = %s LIMIT 1",
             (event_id, due_date),
         )
         return cursor.fetchone() is not None
