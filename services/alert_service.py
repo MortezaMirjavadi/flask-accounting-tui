@@ -18,6 +18,14 @@ class Alert:
     amount: float | None = None
 
 
+def _to_date_value(value) -> date:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        return date.fromisoformat(value)
+    raise TypeError(f"Unsupported date value type: {type(value)!r}")
+
+
 def _safe_to_int(value: int) -> int:
     try:
         value = int(value)
@@ -50,7 +58,10 @@ class AlertService:
         )
 
         for event in upcoming:
-            due = date.fromisoformat(event["due_date"])
+            try:
+                due = _to_date_value(event["due_date"])
+            except (TypeError, ValueError):
+                continue
             days_left = (due - today).days
             if days_left > due_window_days or event["status"] not in ("pending", "snoozed"):
                 continue
@@ -101,7 +112,11 @@ class AlertService:
 
         # Major expense without nearby income
         income_dates = {
-            day["due_date"] for day in upcoming if day["category_type"] == "income" and day["status"] in ("pending", "snoozed")
+            day["due_date"].isoformat()
+            if isinstance(day["due_date"], date)
+            else str(day["due_date"])
+            for day in upcoming
+            if day["category_type"] == "income" and day["status"] in ("pending", "snoozed")
         }
         max_daily_outflow = max((point.outflow for point in forecast.daily_forecast), default=0.0)
         for point in forecast.daily_forecast:

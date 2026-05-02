@@ -108,9 +108,15 @@ def validate_budget_period_payload(data):
 
 def validate_budget_item_payload(data):
     """Validate budget item payload."""
+    if data is None:
+        data = {}
+
+    if not isinstance(data, dict):
+        raise ValueError("Invalid payload")
+
     category_id = data.get("category_id")
     planned_amount = data.get("planned_amount")
-    notes = data.get("notes", "").strip() or None
+    notes = (data.get("notes", "") or "").strip() or None
     
     try:
         category_id = int(category_id)

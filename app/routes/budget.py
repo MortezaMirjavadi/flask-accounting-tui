@@ -1,9 +1,9 @@
-import sqlite3
+import psycopg2
 from flask import Blueprint, request, jsonify
 from app.utils.helpers import get_user_id_from_request, row_to_dict
 from app.models import validate_budget_period_payload, validate_budget_item_payload
 from app.services.budget_service import BudgetService
-from database import get_connection
+from database import get_connection, release_connection
 
 bp = Blueprint('budget', __name__)
 
@@ -33,22 +33,23 @@ def list_periods():
             WHERE deleted_at IS NULL
             GROUP BY budget_period_id
         ) bi ON bp.id = bi.budget_period_id
-        WHERE bp.user_id = ? AND bp.deleted_at IS NULL
+        WHERE bp.user_id = %s AND bp.deleted_at IS NULL
     """
     params = [user_id]
     
     if year_filter is not None:
-        query += " AND bp.year = ?"
+        query += " AND bp.year = %s"
         params.append(year_filter)
     if month_filter is not None:
-        query += " AND bp.month = ?"
+        query += " AND bp.month = %s"
         params.append(month_filter)
     
     query += " ORDER BY bp.year DESC, bp.month DESC"
     
     cursor.execute(query, params)
     rows = cursor.fetchall()
-    conn.close()
+    cursor.close()
+    release_connection(conn)
     
     return jsonify([row_to_dict(r) for r in rows])
 
@@ -96,7 +97,8 @@ def get_period(period_id):
     conn = get_connection()
     cursor = conn.cursor()
     row = BudgetService.get_period(cursor, period_id, user_id)
-    conn.close()
+    cursor.close()
+    release_connection(conn)
     
     if row is None:
         return jsonify({"error": "Budget period not found"}), 404
@@ -120,20 +122,23 @@ def update_period(period_id):
     cursor = conn.cursor()
     
     if BudgetService.get_period(cursor, period_id, user_id) is None:
-        conn.close()
+        cursor.close()
+        release_connection(conn)
         return jsonify({"error": "Budget period not found"}), 404
     
     try:
         cursor.execute(
-            "UPDATE budget_periods SET year = ?, month = ? WHERE id = ? AND user_id = ?",
+            "UPDATE budget_periods SET year = %s, month = %s WHERE id = %s AND user_id = %s",
             (payload["year"], payload["month"], period_id, user_id),
         )
         conn.commit()
-    except sqlite3.IntegrityError:
-        conn.close()
+    except psycopg2.IntegrityError:
+        cursor.close()
+        release_connection(conn)
         return jsonify({"error": "Budget period already exists for this year/month"}), 400
     
-    conn.close()
+    cursor.close()
+    release_connection(conn)
     return jsonify({"id": period_id, "year": payload["year"], "month": payload["month"]})
 
 
@@ -174,49 +179,57 @@ def create_item():
     cursor = conn.cursor()
     
     if BudgetService.get_period(cursor, period_id, user_id) is None:
-        conn.close()
+        cursor.close()
+        release_connection(conn)
         return jsonify({"error": "Budget period not found"}), 404
 
     # Verify category belongs to user
     cursor.execute(
-        "SELECT id FROM categories WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+        "SELECT id FROM categories WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
         (payload["category_id"], user_id),
     )
     if cursor.fetchone() is None:
-        conn.close()
+        cursor.close()
+        release_connection(conn)
         return jsonify({"error": "Category not found or does not belong to you"}), 400
 
     try:
         cursor.execute(
-            "INSERT INTO budget_items (budget_period_id, category_id, planned_amount, notes) VALUES (?, ?, ?, ?)",
+            """
+            INSERT INTO budget_items (budget_period_id, category_id, planned_amount, notes)
+            VALUES (%s, %s, %s, %s) RETURNING id
+            """,
             (period_id, payload["category_id"], payload["planned_amount"], payload["notes"]),
         )
         conn.commit()
-        new_id = cursor.lastrowid
-    except sqlite3.IntegrityError:
+        new_id = cursor.fetchone()['id']
+    except psycopg2.IntegrityError:
+        conn.rollback()
         cursor.execute(
             """
             SELECT id FROM budget_items
-            WHERE budget_period_id = ? AND category_id = ? AND deleted_at IS NOT NULL
+            WHERE budget_period_id = %s AND category_id = %s AND deleted_at IS NOT NULL
             """,
             (period_id, payload["category_id"]),
         )
         archived = cursor.fetchone()
         if archived is None:
-            conn.close()
+            cursor.close()
+            release_connection(conn)
             return jsonify({"error": "Budget item already exists for this category in this period"}), 400
         cursor.execute(
             """
             UPDATE budget_items
-            SET planned_amount = ?, notes = ?, deleted_at = NULL
-            WHERE id = ?
+            SET planned_amount = %s, notes = %s, deleted_at = NULL
+            WHERE id = %s
             """,
             (payload["planned_amount"], payload["notes"], archived["id"]),
         )
         conn.commit()
         new_id = archived["id"]
     
-    conn.close()
+    cursor.close()
+    release_connection(conn)
     return jsonify({"id": new_id, "budget_period_id": period_id, **payload}), 201
 
 
@@ -229,7 +242,8 @@ def get_item(item_id):
     conn = get_connection()
     cursor = conn.cursor()
     row = BudgetService.get_item(cursor, item_id, user_id)
-    conn.close()
+    cursor.close()
+    release_connection(conn)
     
     if row is None:
         return jsonify({"error": "Budget item not found"}), 404
@@ -247,18 +261,20 @@ def list_items(period_id):
     cursor = conn.cursor()
     
     if BudgetService.get_period(cursor, period_id, user_id) is None:
-        conn.close()
+        cursor.close()
+        release_connection(conn)
         return jsonify({"error": "Budget period not found"}), 404
     
     cursor.execute(
         "SELECT bi.*, c.name as category_name, c.type as category_type "
         "FROM budget_items bi "
         "JOIN categories c ON bi.category_id = c.id "
-        "WHERE bi.budget_period_id = ? AND bi.deleted_at IS NULL",
+        "WHERE bi.budget_period_id = %s AND bi.deleted_at IS NULL",
         (period_id,),
     )
     rows = cursor.fetchall()
-    conn.close()
+    cursor.close()
+    release_connection(conn)
     
     return jsonify([row_to_dict(r) for r in rows])
 
@@ -280,29 +296,33 @@ def update_item(item_id):
     
     row = BudgetService.get_item(cursor, item_id, user_id)
     if row is None:
-        conn.close()
+        cursor.close()
+        release_connection(conn)
         return jsonify({"error": "Budget item not found"}), 404
 
     # Verify category belongs to user
     cursor.execute(
-        "SELECT id FROM categories WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+        "SELECT id FROM categories WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
         (payload["category_id"], user_id),
     )
     if cursor.fetchone() is None:
-        conn.close()
+        cursor.close()
+        release_connection(conn)
         return jsonify({"error": "Category not found or does not belong to you"}), 400
 
     try:
         cursor.execute(
-            "UPDATE budget_items SET category_id = ?, planned_amount = ?, notes = ? WHERE id = ? AND deleted_at IS NULL",
+            "UPDATE budget_items SET category_id = %s, planned_amount = %s, notes = %s WHERE id = %s AND deleted_at IS NULL",
             (payload["category_id"], payload["planned_amount"], payload["notes"], item_id),
         )
         conn.commit()
-    except sqlite3.IntegrityError:
-        conn.close()
+    except psycopg2.IntegrityError:
+        cursor.close()
+        release_connection(conn)
         return jsonify({"error": "Budget item already exists for this category in this period"}), 400
     
-    conn.close()
+    cursor.close()
+    release_connection(conn)
     return jsonify({"id": item_id, **payload})
 
 
@@ -316,14 +336,16 @@ def delete_item(item_id):
     cursor = conn.cursor()
     
     if BudgetService.get_item(cursor, item_id, user_id) is None:
-        conn.close()
+        cursor.close()
+        release_connection(conn)
         return jsonify({"error": "Budget item not found"}), 404
     
     cursor.execute(
-        "UPDATE budget_items SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL",
+        "UPDATE budget_items SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s AND deleted_at IS NULL",
         (item_id,),
     )
     conn.commit()
-    conn.close()
+    cursor.close()
+    release_connection(conn)
     
     return jsonify({"message": "Budget item archived"})

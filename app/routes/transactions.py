@@ -1,3 +1,4 @@
+import psycopg2
 from flask import Blueprint, request, jsonify
 from app.utils.helpers import (
     get_user_id_from_request,
@@ -6,14 +7,14 @@ from app.utils.helpers import (
     jalali_to_gregorian,
 )
 from app.models import validate_transaction_payload
-from database import get_connection
+from database import get_connection, release_connection
 
 bp = Blueprint('transactions', __name__)
 
 
 def _get_category_type(cursor, category_id, user_id):
     cursor.execute(
-        "SELECT type FROM categories WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+        "SELECT type FROM categories WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
         (category_id, user_id),
     )
     row = cursor.fetchone()
@@ -22,7 +23,7 @@ def _get_category_type(cursor, category_id, user_id):
 
 def _get_source_amount(cursor, source_id, user_id):
     cursor.execute(
-        "SELECT amount FROM sources WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+        "SELECT amount FROM sources WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
         (source_id, user_id),
     )
     row = cursor.fetchone()
@@ -31,7 +32,7 @@ def _get_source_amount(cursor, source_id, user_id):
 
 def _source_exists(cursor, source_id, user_id):
     cursor.execute(
-        "SELECT 1 FROM sources WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+        "SELECT 1 FROM sources WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
         (source_id, user_id),
     )
     return cursor.fetchone() is not None
@@ -42,7 +43,7 @@ def _adjust_source_amount(cursor, source_id, user_id, amount, category_type):
         return
     delta = amount if category_type == "income" else -amount
     cursor.execute(
-        "UPDATE sources SET amount = amount + ? WHERE id = ? AND user_id = ?",
+        "UPDATE sources SET amount = amount + %s WHERE id = %s AND user_id = %s",
         (delta, source_id, user_id),
     )
 
@@ -123,7 +124,7 @@ def _get_transaction_row(cursor, tx_id, user_id):
         "FROM transactions t "
         "LEFT JOIN categories c ON t.category_id = c.id "
         "LEFT JOIN sources s ON t.source_id = s.id "
-        "WHERE t.id = ? AND t.user_id = ? AND t.deleted_at IS NULL",
+        "WHERE t.id = %s AND t.user_id = %s AND t.deleted_at IS NULL",
         (tx_id, user_id),
     )
     return cursor.fetchone()
@@ -135,7 +136,7 @@ def _get_transfer_row(cursor, tx_id, user_id):
         "FROM transfers t "
         "LEFT JOIN sources fs ON t.from_source_id = fs.id "
         "LEFT JOIN sources ts ON t.to_source_id = ts.id "
-        "WHERE t.id = ? AND t.user_id = ? AND t.deleted_at IS NULL",
+        "WHERE t.id = %s AND t.user_id = %s AND t.deleted_at IS NULL",
         (tx_id, user_id),
     )
     return cursor.fetchone()
@@ -231,22 +232,22 @@ def _reverse_transaction_effect(cursor, transaction_row, user_id):
 
 def _apply_transfer_effect(cursor, transfer_row, user_id):
     cursor.execute(
-        "UPDATE sources SET amount = amount - ? WHERE id = ? AND user_id = ?",
+        "UPDATE sources SET amount = amount - %s WHERE id = %s AND user_id = %s",
         (transfer_row["amount"], transfer_row["from_source_id"], user_id),
     )
     cursor.execute(
-        "UPDATE sources SET amount = amount + ? WHERE id = ? AND user_id = ?",
+        "UPDATE sources SET amount = amount + %s WHERE id = %s AND user_id = %s",
         (transfer_row["amount"], transfer_row["to_source_id"], user_id),
     )
 
 
 def _reverse_transfer_effect(cursor, transfer_row, user_id):
     cursor.execute(
-        "UPDATE sources SET amount = amount + ? WHERE id = ? AND user_id = ?",
+        "UPDATE sources SET amount = amount + %s WHERE id = %s AND user_id = %s",
         (transfer_row["amount"], transfer_row["from_source_id"], user_id),
     )
     cursor.execute(
-        "UPDATE sources SET amount = amount - ? WHERE id = ? AND user_id = ?",
+        "UPDATE sources SET amount = amount - %s WHERE id = %s AND user_id = %s",
         (transfer_row["amount"], transfer_row["to_source_id"], user_id),
     )
 
@@ -282,35 +283,35 @@ def list_transactions():
         "FROM transactions t "
         "LEFT JOIN categories c ON t.category_id = c.id "
         "LEFT JOIN sources s ON t.source_id = s.id "
-        "WHERE t.user_id = ? AND t.deleted_at IS NULL"
+        "WHERE t.user_id = %s AND t.deleted_at IS NULL"
     )
     params = [user_id]
     
     if category_type == "transfer":
         query += " AND 1 = 0"
     if category_id is not None:
-        query += " AND t.category_id = ?"
+        query += " AND t.category_id = %s"
         params.append(category_id)
     if category_type in ("income", "cost"):
-        query += " AND c.type = ?"
+        query += " AND c.type = %s"
         params.append(category_type)
     if source_id is not None:
-        query += " AND t.source_id = ?"
+        query += " AND t.source_id = %s"
         params.append(source_id)
     if date_from:
-        query += " AND t.date >= ?"
+        query += " AND t.date >= %s"
         params.append(date_from)
     if date_to:
-        query += " AND t.date <= ?"
+        query += " AND t.date <= %s"
         params.append(date_to)
     if min_amount is not None:
-        query += " AND t.amount >= ?"
+        query += " AND t.amount >= %s"
         params.append(min_amount)
     if max_amount is not None:
-        query += " AND t.amount <= ?"
+        query += " AND t.amount <= %s"
         params.append(max_amount)
     if description:
-        query += " AND t.description LIKE ?"
+        query += " AND t.description LIKE %s"
         params.append(f"%{description}%")
     
     query += " ORDER BY t.date DESC"
@@ -332,34 +333,35 @@ def list_transactions():
             "FROM transfers t "
             "LEFT JOIN sources fs ON t.from_source_id = fs.id "
             "LEFT JOIN sources ts ON t.to_source_id = ts.id "
-            "WHERE t.user_id = ? AND t.deleted_at IS NULL"
+            "WHERE t.user_id = %s AND t.deleted_at IS NULL"
         )
         transfer_params = [user_id]
 
         if source_id is not None:
-            transfer_query += " AND (t.from_source_id = ? OR t.to_source_id = ?)"
+            transfer_query += " AND (t.from_source_id = %s OR t.to_source_id = %s)"
             transfer_params.extend([source_id, source_id])
         if date_from:
-            transfer_query += " AND t.date >= ?"
+            transfer_query += " AND t.date >= %s"
             transfer_params.append(date_from)
         if date_to:
-            transfer_query += " AND t.date <= ?"
+            transfer_query += " AND t.date <= %s"
             transfer_params.append(date_to)
         if min_amount is not None:
-            transfer_query += " AND t.amount >= ?"
+            transfer_query += " AND t.amount >= %s"
             transfer_params.append(min_amount)
         if max_amount is not None:
-            transfer_query += " AND t.amount <= ?"
+            transfer_query += " AND t.amount <= %s"
             transfer_params.append(max_amount)
         if description:
-            transfer_query += " AND t.notes LIKE ?"
+            transfer_query += " AND t.notes LIKE %s"
             transfer_params.append(f"%{description}%")
 
         cursor.execute(transfer_query, transfer_params)
         transfer_rows = cursor.fetchall()
         results.extend(_format_transfer_list_row(row) for row in transfer_rows)
 
-    conn.close()
+    cursor.close()
+    release_connection(conn)
     results.sort(key=lambda item: item.get("date", ""), reverse=True)
     
     return jsonify(results)
@@ -385,29 +387,43 @@ def create_transaction():
         err_response = _validate_transfer_business_rules(cursor, user_id, payload)
         if err_response:
             status_code = _error_status(err_response)
-            conn.close()
+            cursor.close()
+            release_connection(conn)
             return err_response, status_code
-
-        cursor.execute(
-            """
-            INSERT INTO transfers (user_id, from_source_id, to_source_id, amount, date, notes)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                user_id,
-                payload["from_source_id"],
-                payload["to_source_id"],
-                payload["amount"],
-                payload["date"],
-                payload["notes"],
-            ),
-        )
-        _apply_transfer_effect(cursor, payload, user_id)
-        conn.commit()
-        new_id = cursor.lastrowid
-        conn.close()
-
-        return jsonify(_serialize_transfer(payload, new_id)), 201
+        try:
+            cursor.execute(
+                """
+                INSERT INTO transfers (user_id, from_source_id, to_source_id, amount, date, notes)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (
+                    user_id,
+                    payload["from_source_id"],
+                    payload["to_source_id"],
+                    payload["amount"],
+                    payload["date"],
+                    payload["notes"],
+                ),
+            )
+            new_row = cursor.fetchone()
+            if new_row is None:
+                conn.rollback()
+                cursor.close()
+                release_connection(conn)
+                return jsonify({"error": "Insert did not return id"}), 500
+            new_id = new_row["id"]
+            _apply_transfer_effect(cursor, payload, user_id)
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            cursor.close()
+            release_connection(conn)
+            return jsonify({"error": str(exc)}), 400
+        else:
+            cursor.close()
+            release_connection(conn)
+            return jsonify(_serialize_transfer(payload, new_id)), 201
 
     try:
         payload = validate_transaction_payload(data)
@@ -420,14 +436,16 @@ def create_transaction():
     err_response, cat_type = _validate_transaction_business_rules(cursor, user_id, payload)
     if err_response:
         status_code = _error_status(err_response)
-        conn.close()
+        cursor.close()
+        release_connection(conn)
         return err_response, status_code
 
     source_id = payload.get("source_id")
     cursor.execute(
         """
         INSERT INTO transactions (user_id, date, amount, category_id, source_id, description)
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id
         """,
         (
             user_id,
@@ -438,10 +456,16 @@ def create_transaction():
             payload["description"],
         ),
     )
+    new_row = cursor.fetchone()
+    if new_row is None:
+        cursor.close()
+        release_connection(conn)
+        raise RuntimeError("Insert did not return id")
+    new_id = new_row['id']
     _adjust_source_amount(cursor, source_id, user_id, payload["amount"], cat_type)
     conn.commit()
-    new_id = cursor.lastrowid
-    conn.close()
+    cursor.close()
+    release_connection(conn)
 
     return jsonify(_serialize_transaction(payload, new_id)), 201
 
@@ -462,7 +486,8 @@ def get_transaction(tx_id):
     if row is None:
         row = _get_transfer_row(cursor, tx_id, user_id)
         record_type = "transfer"
-    conn.close()
+    cursor.close()
+    release_connection(conn)
     if row is None:
         return jsonify({"error": "Transaction not found"}), 404
     d = row_to_dict(row)
@@ -491,28 +516,31 @@ def update_transaction(tx_id):
     if original_is_transfer or record_type == "transfer":
         old_transfer = _get_transfer_row(cursor, tx_id, user_id)
         if old_transfer is None:
-            conn.close()
+            cursor.close()
+            release_connection(conn)
             return jsonify({"error": "Transfer not found"}), 404
 
         if is_transfer:
             try:
                 payload = _validate_transfer_payload(data)
             except ValueError as exc:
-                conn.close()
+                cursor.close()
+                release_connection(conn)
                 return jsonify({"error": str(exc)}), 400
 
             err_response = _validate_transfer_business_rules(cursor, user_id, payload, old_transfer=old_transfer)
             if err_response:
                 status_code = _error_status(err_response)
-                conn.close()
+                cursor.close()
+                release_connection(conn)
                 return err_response, status_code
 
             _reverse_transfer_effect(cursor, old_transfer, user_id)
             cursor.execute(
                 """
                 UPDATE transfers
-                SET from_source_id = ?, to_source_id = ?, amount = ?, date = ?, notes = ?
-                WHERE id = ? AND user_id = ?
+                SET from_source_id = %s, to_source_id = %s, amount = %s, date = %s, notes = %s
+                WHERE id = %s AND user_id = %s
                 """,
                 (
                     payload["from_source_id"],
@@ -526,13 +554,15 @@ def update_transaction(tx_id):
             )
             _apply_transfer_effect(cursor, payload, user_id)
             conn.commit()
-            conn.close()
+            cursor.close()
+            release_connection(conn)
             return jsonify(_serialize_transfer(payload, tx_id))
 
         try:
             payload = validate_transaction_payload(data)
         except ValueError as exc:
-            conn.close()
+            cursor.close()
+            release_connection(conn)
             return jsonify({"error": str(exc)}), 400
 
         err_response, new_type = _validate_transaction_business_rules(
@@ -540,18 +570,20 @@ def update_transaction(tx_id):
         )
         if err_response:
             status_code = _error_status(err_response)
-            conn.close()
+            cursor.close()
+            release_connection(conn)
             return err_response, status_code
 
         _reverse_transfer_effect(cursor, old_transfer, user_id)
         cursor.execute(
-            "UPDATE transfers SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+            "UPDATE transfers SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
             (tx_id, user_id),
         )
         cursor.execute(
             """
             INSERT INTO transactions (user_id, date, amount, category_id, source_id, description)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (
                 user_id,
@@ -562,39 +594,44 @@ def update_transaction(tx_id):
                 payload["description"],
             ),
         )
-        new_id = cursor.lastrowid
+        new_id = cursor.fetchone()['id']
         _adjust_source_amount(cursor, payload.get("source_id"), user_id, payload["amount"], new_type)
         conn.commit()
-        conn.close()
+        cursor.close()
+        release_connection(conn)
         return jsonify(_serialize_transaction(payload, new_id))
 
     old_transaction = _get_transaction_row(cursor, tx_id, user_id)
     if old_transaction is None:
-        conn.close()
+        cursor.close()
+        release_connection(conn)
         return jsonify({"error": "Transaction not found"}), 404
 
     if is_transfer:
         try:
             payload = _validate_transfer_payload(data)
         except ValueError as exc:
-            conn.close()
+            cursor.close()
+            release_connection(conn)
             return jsonify({"error": str(exc)}), 400
 
         err_response = _validate_transfer_business_rules(cursor, user_id, payload, old_transaction=old_transaction)
         if err_response:
             status_code = _error_status(err_response)
-            conn.close()
+            cursor.close()
+            release_connection(conn)
             return err_response, status_code
 
         _reverse_transaction_effect(cursor, old_transaction, user_id)
         cursor.execute(
-            "UPDATE transactions SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+            "UPDATE transactions SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
             (tx_id, user_id),
         )
         cursor.execute(
             """
             INSERT INTO transfers (user_id, from_source_id, to_source_id, amount, date, notes)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (
                 user_id,
@@ -605,16 +642,18 @@ def update_transaction(tx_id):
                 payload["notes"],
             ),
         )
-        new_id = cursor.lastrowid
+        new_id = cursor.fetchone()['id']
         _apply_transfer_effect(cursor, payload, user_id)
         conn.commit()
-        conn.close()
+        cursor.close()
+        release_connection(conn)
         return jsonify(_serialize_transfer(payload, new_id))
 
     try:
         payload = validate_transaction_payload(data)
     except ValueError as exc:
-        conn.close()
+        cursor.close()
+        release_connection(conn)
         return jsonify({"error": str(exc)}), 400
 
     err_response, new_type = _validate_transaction_business_rules(
@@ -622,15 +661,16 @@ def update_transaction(tx_id):
     )
     if err_response:
         status_code = _error_status(err_response)
-        conn.close()
+        cursor.close()
+        release_connection(conn)
         return err_response, status_code
 
     _reverse_transaction_effect(cursor, old_transaction, user_id)
     cursor.execute(
         """
         UPDATE transactions
-        SET date = ?, amount = ?, category_id = ?, source_id = ?, description = ?
-        WHERE id = ? AND user_id = ?
+        SET date = %s, amount = %s, category_id = %s, source_id = %s, description = %s
+        WHERE id = %s AND user_id = %s
         """,
         (
             payload["date"],
@@ -644,7 +684,8 @@ def update_transaction(tx_id):
     )
     _adjust_source_amount(cursor, payload.get("source_id"), user_id, payload["amount"], new_type)
     conn.commit()
-    conn.close()
+    cursor.close()
+    release_connection(conn)
     return jsonify(_serialize_transaction(payload, tx_id))
 
 
@@ -660,23 +701,26 @@ def delete_transaction(tx_id):
     if old is not None:
         _reverse_transaction_effect(cursor, old, user_id)
         cursor.execute(
-            "UPDATE transactions SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+            "UPDATE transactions SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
             (tx_id, user_id),
         )
         conn.commit()
-        conn.close()
+        cursor.close()
+        release_connection(conn)
         return jsonify({"message": "Transaction archived"})
 
     old_transfer = _get_transfer_row(cursor, tx_id, user_id)
     if old_transfer is None:
-        conn.close()
+        cursor.close()
+        release_connection(conn)
         return jsonify({"error": "Transaction not found"}), 404
 
     _reverse_transfer_effect(cursor, old_transfer, user_id)
     cursor.execute(
-        "UPDATE transfers SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+        "UPDATE transfers SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
         (tx_id, user_id),
     )
     conn.commit()
-    conn.close()
+    cursor.close()
+    release_connection(conn)
     return jsonify({"message": "Transaction archived"})

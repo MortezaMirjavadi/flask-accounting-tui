@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify
 from app.utils.helpers import get_user_id_from_request
-from database import get_connection
+from database import get_connection, release_connection
 
 bp = Blueprint('settings', __name__)
 
@@ -14,23 +14,24 @@ def reset_all_data():
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("UPDATE transactions SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = ? AND deleted_at IS NULL", (user_id,))
-    cursor.execute("UPDATE transfers SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = ? AND deleted_at IS NULL", (user_id,))
+    cursor.execute("UPDATE transactions SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = %s AND deleted_at IS NULL", (user_id,))
+    cursor.execute("UPDATE transfers SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = %s AND deleted_at IS NULL", (user_id,))
     cursor.execute(
         """
         UPDATE budget_items
         SET deleted_at = CURRENT_TIMESTAMP
         WHERE budget_period_id IN (
-            SELECT id FROM budget_periods WHERE user_id = ? AND deleted_at IS NULL
+            SELECT id FROM budget_periods WHERE user_id = %s AND deleted_at IS NULL
         ) AND deleted_at IS NULL
         """,
         (user_id,),
     )
-    cursor.execute("UPDATE budget_periods SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = ? AND deleted_at IS NULL", (user_id,))
-    cursor.execute("UPDATE sources SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = ? AND deleted_at IS NULL", (user_id,))
-    cursor.execute("UPDATE categories SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = ? AND deleted_at IS NULL", (user_id,))
+    cursor.execute("UPDATE budget_periods SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = %s AND deleted_at IS NULL", (user_id,))
+    cursor.execute("UPDATE sources SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = %s AND deleted_at IS NULL", (user_id,))
+    cursor.execute("UPDATE categories SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = %s AND deleted_at IS NULL", (user_id,))
     
     conn.commit()
-    conn.close()
+    cursor.close()
+    release_connection(conn)
     
     return jsonify({"message": "All data archived successfully"})

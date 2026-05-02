@@ -7,13 +7,18 @@ from typing import Optional
 import jdatetime
 
 from app.utils.helpers import gregorian_to_jalali, jalali_to_gregorian
-from database import get_connection
+from database import get_connection, release_connection
+
+
+def _to_float(value):
+    return float(value) if value is not None else 0.0
 
 
 @dataclass
 class ReportTransaction:
     id: int
     date: str
+    weekday: str
     amount: float
     category_id: Optional[int]
     category_name: str
@@ -47,6 +52,7 @@ class MonthlyBudgetUsageStatus:
 @dataclass
 class DailyReport:
     date: str
+    weekday: str
     total_income: float
     total_expenses: float
     net: float
@@ -144,15 +150,27 @@ class MonthlyReport:
 
 
 class ReportingService:
+    _JALALI_WEEKDAYS = ("Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
+
+    @staticmethod
+    def _weekday_name_from_jalali_date(jalali_date: str) -> str:
+        try:
+            jalali_date_obj = jdatetime.date.fromisoformat(jalali_date)
+            return ReportingService._JALALI_WEEKDAYS[jalali_date_obj.weekday()]
+        except (ValueError, TypeError):
+            return ""
+
     @staticmethod
     def get_daily_report(user_id: int, date: str) -> DailyReport:
         greg_date = jalali_to_gregorian(date)
         conn = get_connection()
         cursor = conn.cursor()
+        weekday_name = ReportingService._weekday_name_from_jalali_date(date)
         records = ReportingService._fetch_transactions(cursor, user_id, greg_date, greg_date)
         monthly_usage = ReportingService._get_month_budget_usage(cursor, user_id, date)
         previous_avg = ReportingService._get_previous_7_day_avg_expense(cursor, user_id, greg_date)
-        conn.close()
+        cursor.close()
+        release_connection(conn)
 
         income = sum(record.amount for record in records if record.category_type == "income")
         expenses = sum(record.amount for record in records if record.category_type == "cost")
@@ -166,6 +184,7 @@ class ReportingService:
 
         return DailyReport(
             date=date,
+            weekday=weekday_name,
             total_income=income,
             total_expenses=expenses,
             net=income - expenses,
@@ -195,7 +214,8 @@ class ReportingService:
         previous_records = ReportingService._fetch_transactions(
             cursor, user_id, previous_start.strftime("%Y-%m-%d"), previous_end.strftime("%Y-%m-%d")
         )
-        conn.close()
+        cursor.close()
+        release_connection(conn)
 
         income = sum(record.amount for record in records if record.category_type == "income")
         expenses = sum(record.amount for record in records if record.category_type == "cost")
@@ -234,7 +254,8 @@ class ReportingService:
         previous_records = ReportingService._fetch_transactions(cursor, user_id, prev_start, prev_end)
         budget_rows = ReportingService._fetch_budget_rows(cursor, user_id, year, month)
         source_health = ReportingService._build_source_health(cursor, user_id, month_start, month_end)
-        conn.close()
+        cursor.close()
+        release_connection(conn)
 
         total_income = sum(record.amount for record in current_records if record.category_type == "income")
         total_expenses = sum(record.amount for record in current_records if record.category_type == "cost")
@@ -285,10 +306,10 @@ class ReportingService:
             FROM transactions t
             LEFT JOIN categories c ON t.category_id = c.id
             LEFT JOIN sources s ON t.source_id = s.id
-            WHERE t.user_id = ?
+            WHERE t.user_id = %s
               AND t.deleted_at IS NULL
-              AND t.date >= ?
-              AND t.date <= ?
+              AND t.date >= %s
+              AND t.date <= %s
             ORDER BY t.date DESC, t.id DESC
             """,
             (user_id, start_date, end_date),
@@ -298,7 +319,8 @@ class ReportingService:
             ReportTransaction(
                 id=row["id"],
                 date=gregorian_to_jalali(row["date"]),
-                amount=row["amount"] or 0,
+                weekday=ReportingService._weekday_name_from_jalali_date(gregorian_to_jalali(row["date"])),
+                amount=_to_float(row["amount"]),
                 category_id=row["category_id"],
                 category_name=row["category_name"] or "Unknown",
                 category_type=row["category_type"] or "cost",
@@ -349,15 +371,15 @@ class ReportingService:
                 SELECT COALESCE(SUM(t.amount), 0) AS total
                 FROM transactions t
                 LEFT JOIN categories c ON t.category_id = c.id
-                WHERE t.user_id = ?
+                WHERE t.user_id = %s
                   AND t.deleted_at IS NULL
-                  AND t.date = ?
+                  AND t.date = %s
                   AND c.type = 'cost'
                 """,
                 (user_id, day_str),
             )
             row = cursor.fetchone()
-            totals.append((row["total"] if row else 0) or 0)
+            totals.append(_to_float(row["total"]) if row else 0.0)
         return sum(totals) / 7
 
     @staticmethod
@@ -366,23 +388,23 @@ class ReportingService:
         month = int(jalali_date[5:7])
         month_start, month_end, _ = ReportingService._jalali_month_range(year, month)
         budget_rows = ReportingService._fetch_budget_rows(cursor, user_id, year, month)
-        planned = sum(row["planned_amount"] for row in budget_rows)
+        planned = sum(_to_float(row["planned_amount"]) for row in budget_rows)
 
         cursor.execute(
             """
             SELECT COALESCE(SUM(t.amount), 0) AS total
             FROM transactions t
             LEFT JOIN categories c ON t.category_id = c.id
-            WHERE t.user_id = ?
+            WHERE t.user_id = %s
               AND t.deleted_at IS NULL
-              AND t.date >= ?
-              AND t.date <= ?
+              AND t.date >= %s
+              AND t.date <= %s
               AND c.type = 'cost'
             """,
             (user_id, month_start, month_end),
         )
         row = cursor.fetchone()
-        consumed = (row["total"] if row else 0) or 0
+        consumed = _to_float(row["total"]) if row else 0.0
         percent = (consumed / planned * 100) if planned > 0 else 0.0
         return MonthlyBudgetUsageStatus(
             consumed_amount=consumed,
@@ -402,15 +424,20 @@ class ReportingService:
             FROM budget_periods bp
             JOIN budget_items bi ON bp.id = bi.budget_period_id
             LEFT JOIN categories c ON bi.category_id = c.id
-            WHERE bp.user_id = ?
-              AND bp.year = ?
-              AND bp.month = ?
+            WHERE bp.user_id = %s
+              AND bp.year = %s
+              AND bp.month = %s
               AND bp.deleted_at IS NULL
               AND bi.deleted_at IS NULL
             """,
             (user_id, year, month),
         )
-        return [dict(row) for row in cursor.fetchall()]
+        budget_rows = []
+        for row in cursor.fetchall():
+            item = dict(row)
+            item["planned_amount"] = _to_float(item.get("planned_amount"))
+            budget_rows.append(item)
+        return budget_rows
 
     @staticmethod
     def _build_monthly_category_breakdown(
@@ -426,7 +453,7 @@ class ReportingService:
 
         merged: dict[Optional[int], MonthlyCategoryBreakdown] = {}
         for row in budget_rows:
-            planned = row["planned_amount"] or 0
+            planned = _to_float(row["planned_amount"])
             actual = actuals.get(row["category_id"], 0.0)
             merged[row["category_id"]] = ReportingService._make_monthly_category_row(
                 row["category_id"], row["category_name"], planned, actual
@@ -483,7 +510,7 @@ class ReportingService:
     @staticmethod
     def _build_source_health(cursor, user_id: int, start_date: str, end_date: str) -> list[SourceHealth]:
         cursor.execute(
-            "SELECT id, name, amount FROM sources WHERE user_id = ? AND deleted_at IS NULL ORDER BY name",
+            "SELECT id, name, amount FROM sources WHERE user_id = %s AND deleted_at IS NULL ORDER BY name",
             (user_id,),
         )
         sources = cursor.fetchall()
@@ -493,7 +520,7 @@ class ReportingService:
         results = []
         for source in sources:
             source_id = source["id"]
-            current_amount = source["amount"] or 0
+            current_amount = _to_float(source["amount"])
             ending_balance = current_amount - after_delta.get(source_id, 0.0)
             balance_change = period_delta.get(source_id, 0.0)
             starting_balance = ending_balance - balance_change
@@ -519,47 +546,53 @@ class ReportingService:
                 SUM(CASE WHEN c.type = 'income' THEN t.amount ELSE -t.amount END) AS delta
             FROM transactions t
             LEFT JOIN categories c ON t.category_id = c.id
-            WHERE t.user_id = ?
+            WHERE t.user_id = %s
               AND t.deleted_at IS NULL
               AND t.source_id IS NOT NULL
-              AND t.date >= ?
-              AND t.date <= ?
+              AND t.date >= %s
+              AND t.date <= %s
             GROUP BY t.source_id
             """,
             (user_id, start_date, end_date),
         )
         for row in cursor.fetchall():
-            deltas[row["source_id"]] = (deltas.get(row["source_id"], 0.0) + (row["delta"] or 0))
+            deltas[row["source_id"]] = (
+                deltas.get(row["source_id"], 0.0) + _to_float(row["delta"])
+            )
 
         cursor.execute(
             """
             SELECT from_source_id AS source_id, SUM(-amount) AS delta
             FROM transfers
-            WHERE user_id = ?
+            WHERE user_id = %s
               AND deleted_at IS NULL
-              AND date >= ?
-              AND date <= ?
+              AND date >= %s
+              AND date <= %s
             GROUP BY from_source_id
             """,
             (user_id, start_date, end_date),
         )
         for row in cursor.fetchall():
-            deltas[row["source_id"]] = deltas.get(row["source_id"], 0.0) + (row["delta"] or 0)
+            deltas[row["source_id"]] = (
+                deltas.get(row["source_id"], 0.0) + _to_float(row["delta"])
+            )
 
         cursor.execute(
             """
             SELECT to_source_id AS source_id, SUM(amount) AS delta
             FROM transfers
-            WHERE user_id = ?
+            WHERE user_id = %s
               AND deleted_at IS NULL
-              AND date >= ?
-              AND date <= ?
+              AND date >= %s
+              AND date <= %s
             GROUP BY to_source_id
             """,
             (user_id, start_date, end_date),
         )
         for row in cursor.fetchall():
-            deltas[row["source_id"]] = deltas.get(row["source_id"], 0.0) + (row["delta"] or 0)
+            deltas[row["source_id"]] = (
+                deltas.get(row["source_id"], 0.0) + _to_float(row["delta"])
+            )
 
         return deltas
 
@@ -574,44 +607,50 @@ class ReportingService:
                 SUM(CASE WHEN c.type = 'income' THEN t.amount ELSE -t.amount END) AS delta
             FROM transactions t
             LEFT JOIN categories c ON t.category_id = c.id
-            WHERE t.user_id = ?
+            WHERE t.user_id = %s
               AND t.deleted_at IS NULL
               AND t.source_id IS NOT NULL
-              AND t.date > ?
+              AND t.date > %s
             GROUP BY t.source_id
             """,
             (user_id, end_date),
         )
         for row in cursor.fetchall():
-            deltas[row["source_id"]] = deltas.get(row["source_id"], 0.0) + (row["delta"] or 0)
+            deltas[row["source_id"]] = (
+                deltas.get(row["source_id"], 0.0) + _to_float(row["delta"])
+            )
 
         cursor.execute(
             """
             SELECT from_source_id AS source_id, SUM(-amount) AS delta
             FROM transfers
-            WHERE user_id = ?
+            WHERE user_id = %s
               AND deleted_at IS NULL
-              AND date > ?
+              AND date > %s
             GROUP BY from_source_id
             """,
             (user_id, end_date),
         )
         for row in cursor.fetchall():
-            deltas[row["source_id"]] = deltas.get(row["source_id"], 0.0) + (row["delta"] or 0)
+            deltas[row["source_id"]] = (
+                deltas.get(row["source_id"], 0.0) + _to_float(row["delta"])
+            )
 
         cursor.execute(
             """
             SELECT to_source_id AS source_id, SUM(amount) AS delta
             FROM transfers
-            WHERE user_id = ?
+            WHERE user_id = %s
               AND deleted_at IS NULL
-              AND date > ?
+              AND date > %s
             GROUP BY to_source_id
             """,
             (user_id, end_date),
         )
         for row in cursor.fetchall():
-            deltas[row["source_id"]] = deltas.get(row["source_id"], 0.0) + (row["delta"] or 0)
+            deltas[row["source_id"]] = (
+                deltas.get(row["source_id"], 0.0) + _to_float(row["delta"])
+            )
 
         return deltas
 
@@ -670,7 +709,7 @@ class ReportingService:
         spent_so_far = sum(item.amount for item in current_records if item.category_type == "cost")
         velocity = spent_so_far / max(days_passed, 1)
         forecast = velocity * total_days
-        planned_total = sum(row["planned_amount"] or 0 for row in budget_rows)
+        planned_total = sum(_to_float(row["planned_amount"]) for row in budget_rows)
         overrun = max(0.0, forecast - planned_total)
         return SpendingVelocity(
             velocity=velocity,
