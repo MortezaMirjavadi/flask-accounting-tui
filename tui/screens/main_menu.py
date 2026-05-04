@@ -24,6 +24,8 @@ class MainMenuScreen(Screen):
         Binding("5", "go_budget", "Budget"),
         Binding("6", "go_calendar", "Calendar"),
         Binding("7", "go_settings", "Settings"),
+        Binding("8", "go_checks", "Checks"),
+        Binding("9", "go_installments", "Installments"),
         Binding("l", "logout", "Logout"),
     ]
 
@@ -46,8 +48,10 @@ class MainMenuScreen(Screen):
                 ListItem(Label("5. Budget")),
                 ListItem(Label("6. Calendar")),
                 ListItem(Label("7. Settings")),
-                ListItem(Label("8. Logout")),
-                ListItem(Label("9. Exit")),
+                ListItem(Label("8. Checks")),
+                ListItem(Label("9. Installments")),
+                ListItem(Label("10. Logout")),
+                ListItem(Label("11. Exit")),
                 id="main_menu_list",
             )
         with Vertical(classes="bottom_bar"):
@@ -56,7 +60,7 @@ class MainMenuScreen(Screen):
             shamsi_str = jalali_now.strftime("%Y-%m-%d")
             yield HelpTip(
                 f"Date: [{shamsi_str}]  [↑/↓] Navigate  [Enter] Select  "
-                f"[1-7] Quick select  [L] Logout  [Q] Exit",
+                f"[1-9] Quick select  [L] Logout  [Q] Exit",
                 id="help"
             )
             yield StatusBar("Enter=Select  Esc=Back  L=Logout  Q=Quit", id="status")
@@ -65,13 +69,17 @@ class MainMenuScreen(Screen):
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle menu selection."""
         idx = event.list_view.index
-        if idx == 7:  # Logout
+        if idx == 9:  # Logout
             self.action_logout()
-        elif idx == 8:  # Exit
+        elif idx == 10:  # Exit
             self.app.action_quit()
         elif idx == 5:  # Calendar
             self.action_go_calendar()
-        elif 0 <= idx < 7:
+        elif idx == 7:  # Checks
+            self.action_go_checks()
+        elif idx == 8:  # Installments
+            self.action_go_installments()
+        elif 0 <= idx < 9:
             screen_class = self._get_screen_class(idx)
             self.app.push_screen(screen_class())
 
@@ -125,6 +133,14 @@ class MainMenuScreen(Screen):
     def action_go_settings(self):
         from tui.screens.settings import SettingsScreen
         self.app.push_screen(SettingsScreen())
+
+    def action_go_checks(self):
+        from tui.screens.checks import ChecksScreen
+        self.app.push_screen(ChecksScreen())
+
+    def action_go_installments(self):
+        from tui.screens.installments import InstallmentsScreen
+        self.app.push_screen(InstallmentsScreen())
 
     def action_logout(self):
         self.app.user = None

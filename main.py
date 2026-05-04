@@ -44,7 +44,7 @@ def _ensure_category(cursor, user_id: int, name: str, category_type: str) -> int
         return int(row["id"])
 
     cursor.execute(
-        "INSERT INTO categories (user_id, name, type) VALUES (%s, %s, %s)",
+        "INSERT INTO categories (user_id, name, type) VALUES (%s, %s, %s) RETURNING id",
         (user_id, name, category_type),
     )
     return int(cursor.fetchone()['id'])
@@ -60,7 +60,7 @@ def _ensure_source(cursor, user_id: int, name: str, amount: float) -> int:
         return int(row["id"])
 
     cursor.execute(
-        "INSERT INTO sources (user_id, name, amount) VALUES (%s, %s, %s)",
+        "INSERT INTO sources (user_id, name, amount) VALUES (%s, %s, %s) RETURNING id",
         (user_id, name, amount),
     )
     return int(cursor.fetchone()['id'])
@@ -206,6 +206,130 @@ def _seed_financial_events(cursor, user_id: int, categories: dict[str, int], sou
             pass
 
 
+def _seed_checks(cursor, user_id: int, categories: dict[str, int], source_id: int) -> None:
+    from services.check_service import CheckService
+
+    cursor.execute("SELECT 1 FROM checks WHERE user_id = %s LIMIT 1", (user_id,))
+    if cursor.fetchone() is not None:
+        return
+
+    today = date.today()
+    sample_checks = [
+        {
+            "check_number": "CHK-001",
+            "bank_name": "Mellat",
+            "amount": 250000.0,
+            "issue_date": today.isoformat(),
+            "due_date": (today + timedelta(days=7)).isoformat(),
+            "type": "issued",
+            "category_id": categories["Rent"],
+            "source_id": source_id,
+            "description": "Monthly rent check",
+        },
+        {
+            "check_number": "CHK-002",
+            "bank_name": "Mellat",
+            "amount": 125000.0,
+            "issue_date": today.isoformat(),
+            "due_date": (today + timedelta(days=14)).isoformat(),
+            "type": "issued",
+            "category_id": categories["Utilities"],
+            "source_id": source_id,
+            "description": "Utilities payment",
+        },
+        {
+            "check_number": "CHK-003",
+            "bank_name": "Saderat",
+            "amount": 500000.0,
+            "issue_date": (today - timedelta(days=10)).isoformat(),
+            "due_date": (today - timedelta(days=3)).isoformat(),
+            "type": "received",
+            "category_id": categories["Freelance"],
+            "source_id": source_id,
+            "description": "Freelance project payment",
+        },
+        {
+            "check_number": "CHK-004",
+            "bank_name": "Saderat",
+            "amount": 300000.0,
+            "issue_date": (today - timedelta(days=5)).isoformat(),
+            "due_date": (today + timedelta(days=2)).isoformat(),
+            "type": "received",
+            "category_id": categories["Salary Income"],
+            "source_id": source_id,
+            "description": "Client advance payment",
+        },
+        {
+            "check_number": "CHK-005",
+            "bank_name": "Tejarat",
+            "amount": 450000.0,
+            "issue_date": today.isoformat(),
+            "due_date": (today + timedelta(days=30)).isoformat(),
+            "type": "issued",
+            "category_id": categories["Insurance"],
+            "source_id": source_id,
+            "description": "Quarterly insurance premium",
+        },
+    ]
+
+    for payload in sample_checks:
+        try:
+            CheckService.add_check(user_id, payload)
+        except Exception as exc:
+            print(f"[SEED] Skipped check {payload.get('check_number')}: {exc}")
+
+
+def _seed_installment_plans(cursor, user_id: int, categories: dict[str, int], source_id: int) -> None:
+    from services.installment_service import InstallmentService
+
+    cursor.execute("SELECT 1 FROM installment_plans WHERE user_id = %s LIMIT 1", (user_id,))
+    if cursor.fetchone() is not None:
+        return
+
+    today = date.today()
+    sample_plans = [
+        {
+            "title": "Laptop Purchase",
+            "total_amount": 12000000.0,
+            "installment_count": 12,
+            "installment_amount": 1000000.0,
+            "start_date": today.isoformat(),
+            "due_day_of_month": min(today.day, 28),
+            "category_id": categories["Utilities"],
+            "source_id": source_id,
+            "status": "active",
+        },
+        {
+            "title": "Phone Installment",
+            "total_amount": 6000000.0,
+            "installment_count": 6,
+            "installment_amount": 1000000.0,
+            "start_date": (today - timedelta(days=45)).isoformat(),
+            "due_day_of_month": min(today.day, 28),
+            "category_id": categories["Utilities"],
+            "source_id": source_id,
+            "status": "active",
+        },
+        {
+            "title": "Home Appliance",
+            "total_amount": 9000000.0,
+            "installment_count": 9,
+            "installment_amount": 1000000.0,
+            "start_date": (today - timedelta(days=90)).isoformat(),
+            "due_day_of_month": min(today.day, 28),
+            "category_id": categories["Rent"],
+            "source_id": source_id,
+            "status": "completed",
+        },
+    ]
+
+    for payload in sample_plans:
+        try:
+            InstallmentService.create_installment_plan(user_id, payload)
+        except Exception as exc:
+            print(f"[SEED] Skipped plan {payload.get('title')}: {exc}")
+
+
 def seed_demo_data(user_id: int) -> None:
     conn = get_connection()
     try:
@@ -228,6 +352,12 @@ def seed_demo_data(user_id: int) -> None:
         conn.commit()
 
         _seed_financial_events(cursor, user_id, categories, source_id)
+
+        # Commit before seeding checks/installments so they can use their own connections
+        conn.commit()
+
+        _seed_checks(cursor, user_id, categories, source_id)
+        _seed_installment_plans(cursor, user_id, categories, source_id)
 
         conn.commit()
     finally:

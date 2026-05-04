@@ -5,6 +5,8 @@ from app.routes.transactions import bp as transactions_bp
 from app.routes.budget import bp as budget_bp
 from app.routes.reports import bp as reports_bp
 from app.routes.settings import bp as settings_bp
+from app.routes.installments import bp as installments_bp
+from app.routes.checks import bp as checks_bp
 
 
 def register_blueprints(app):
@@ -15,3 +17,5 @@ def register_blueprints(app):
     app.register_blueprint(budget_bp, url_prefix='/budget')
     app.register_blueprint(reports_bp, url_prefix='/reports')
     app.register_blueprint(settings_bp, url_prefix='/settings')
+    app.register_blueprint(installments_bp, url_prefix='/installments')
+    app.register_blueprint(checks_bp, url_prefix='/checks')

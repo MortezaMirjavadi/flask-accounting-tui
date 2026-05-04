@@ -167,6 +167,64 @@ def init_db():
                 category_id INTEGER NOT NULL REFERENCES categories(id),
                 source_id INTEGER REFERENCES sources(id),
                 description TEXT,
+                reference_type TEXT,
+                reference_id INTEGER,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Installment plans and individual installment records
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS installment_plans (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                title VARCHAR(255) NOT NULL,
+                total_amount NUMERIC(15, 2) NOT NULL CHECK (total_amount >= 0),
+                installment_count INTEGER NOT NULL CHECK (installment_count > 0),
+                installment_amount NUMERIC(15, 2) NOT NULL CHECK (installment_amount >= 0),
+                start_date DATE NOT NULL,
+                due_day_of_month INTEGER NOT NULL CHECK (due_day_of_month BETWEEN 1 AND 31),
+                category_id INTEGER NOT NULL REFERENCES categories(id),
+                source_id INTEGER REFERENCES sources(id),
+                status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'canceled')),
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS installments (
+                id SERIAL PRIMARY KEY,
+                plan_id INTEGER NOT NULL REFERENCES installment_plans(id) ON DELETE CASCADE,
+                installment_number INTEGER NOT NULL CHECK (installment_number > 0),
+                amount NUMERIC(15, 2) NOT NULL CHECK (amount >= 0),
+                due_date DATE NOT NULL,
+                paid_date DATE,
+                status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'overdue')),
+                transaction_id INTEGER REFERENCES transactions(id),
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(plan_id, installment_number)
+            )
+        """)
+
+        # Checks (issued/received)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS checks (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                check_number VARCHAR(100),
+                bank_name VARCHAR(255),
+                amount NUMERIC(15, 2) NOT NULL CHECK (amount >= 0),
+                issue_date DATE NOT NULL,
+                due_date DATE NOT NULL,
+                type VARCHAR(20) NOT NULL CHECK (type IN ('issued', 'received')),
+                source_id INTEGER REFERENCES sources(id),
+                category_id INTEGER NOT NULL REFERENCES categories(id),
+                status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'cleared', 'bounced', 'canceled')),
+                transaction_id INTEGER REFERENCES transactions(id),
+                description TEXT,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -261,10 +319,19 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_transfers_date ON transfers(date)")
 
         # Ensure legacy tables contain soft-delete support
+        for table_name, column_name, definition in (
+            ("transactions", "reference_type", "TEXT"),
+            ("transactions", "reference_id", "INTEGER"),
+        ):
+            _ensure_column(cursor, table_name, column_name, definition)
+
         for table_name in (
             "categories",
             "sources",
             "transactions",
+            "installment_plans",
+            "installments",
+            "checks",
             "transfers",
             "budget_periods",
             "budget_items",
@@ -278,6 +345,9 @@ def init_db():
             "categories",
             "sources",
             "transactions",
+            "installment_plans",
+            "installments",
+            "checks",
             "budget_periods",
             "budget_items",
             "financial_events",
@@ -292,6 +362,9 @@ def init_db():
             "categories",
             "sources",
             "transactions",
+            "installment_plans",
+            "installments",
+            "checks",
             "budget_periods",
             "budget_items",
             "financial_events",
@@ -331,6 +404,15 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_financial_event_instances_event
                 ON financial_event_instances(event_id, due_date)
         """)
+
+        # Indexes for commitments
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_installment_plans_user_status ON installment_plans(user_id, status)")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_installments_plan_status_due ON installments(plan_id, status, due_date)"
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_checks_user_status_due ON checks(user_id, status, due_date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_reference ON transactions(reference_type, reference_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_reference_id_only ON transactions(reference_id)")
         
         conn.commit()
         print(f"[DB] Database initialized successfully")
