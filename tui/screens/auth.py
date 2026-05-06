@@ -58,9 +58,8 @@ class LoginScreen(Screen):
             self.app.push_screen(MessageBox(err, "Error"))
         else:
             self.app.user = data
-            # Import here to avoid circular dependency
-            from tui.screens.main_menu import MainMenuScreen
-            self.app.push_screen(MainMenuScreen())
+            from tui.sidebar_menu import SidebarMainMenuScreen
+            self.app.push_screen(SidebarMainMenuScreen())
 
     def do_register(self):
         username = self.query_one("#login_user", Input).value.strip()

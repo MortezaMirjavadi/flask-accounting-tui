@@ -300,9 +300,11 @@ def list_transactions():
         params.append(source_id)
     if date_from:
         query += " AND t.date >= %s"
+        date_from = jalali_to_gregorian(date_from)
         params.append(date_from)
     if date_to:
         query += " AND t.date <= %s"
+        date_to = jalali_to_gregorian(date_to)
         params.append(date_to)
     if min_amount is not None:
         query += " AND t.amount >= %s"

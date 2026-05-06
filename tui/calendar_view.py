@@ -81,7 +81,8 @@ class EventFormScreen(ModalScreen[dict | None]):
         if not has_categories:
             cat_options = [("No categories", "")]
 
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="form_panel center_screen"):
             with VerticalScroll(classes="form_scroll"):
                 yield Label("[b]Financial Event Editor[/b]")
@@ -149,7 +150,8 @@ class CalendarScreen(Screen):
         self._sources = []
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="wide_panel center_screen"):
             yield Label("FINANCIAL CALENDAR", classes="menu_header")
             yield Rule()
@@ -162,7 +164,8 @@ class CalendarScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield Static("[L/R]Prev/Next [Up/Down]Week [A]Add [E]Edit [Del]Delete [Esc]Back", id="help")
             yield Static("Calendar View - Press Esc to return", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self):
         from database import get_connection, release_connection

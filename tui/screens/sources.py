@@ -23,7 +23,8 @@ class SourcesScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="main_panel center_screen"):
             yield Label("SOURCES", classes="menu_header")
             yield Rule()
@@ -36,7 +37,8 @@ class SourcesScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-3] Quick select  [Esc] Back", id="help")
             yield StatusBar("Enter=Select  Esc=Back", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         idx = event.list_view.index
@@ -70,7 +72,8 @@ class SourceListScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="wide_panel center_screen"):
             yield Label("SOURCE LIST", classes="menu_header")
             yield Rule()
@@ -90,7 +93,8 @@ class SourceListScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [T] Transfers  [F] Filter  [R] Reset  [Esc] Back", id="help")
             yield StatusBar("E=Edit  D=Delete  T=Transfers  F=Filter  R=Reset  Esc=Back", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#src_table", DataTable)
@@ -111,8 +115,8 @@ class SourceListScreen(Screen):
         if not self._data:
             table.add_row("-", "No sources found", "-")
         else:
-            for s in self._data:
-                table.add_row(str(s["id"]), s["name"], format_toman(s["amount"]))
+            rows = [(str(s["id"]), s["name"], format_toman(s["amount"])) for s in self._data]
+            table.add_rows(rows)
         self.update_detail()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -249,7 +253,8 @@ class SourceAddScreen(Screen):
     BINDINGS = [Binding("escape", "go_back", "Back")]
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="main_panel center_screen"):
             yield Label("ADD SOURCE", classes="menu_header")
             yield Rule()
@@ -264,7 +269,8 @@ class SourceAddScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
@@ -315,7 +321,8 @@ class SourceEditScreen(Screen):
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="main_panel center_screen"):
             yield Label("EDIT SOURCE", classes="menu_header")
             yield Rule()
@@ -330,7 +337,8 @@ class SourceEditScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self) -> None:
         resp = api_get(f"/sources/{self.src_id}", username=self.app.user.get("username"))
@@ -390,7 +398,8 @@ class SourceTransferReportScreen(Screen):
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="wide_panel center_screen"):
             yield Label(f"TRANSFER REPORT - {self.src_name}", classes="menu_header")
             yield Rule()
@@ -400,7 +409,8 @@ class SourceTransferReportScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [Esc] Back", id="help")
             yield StatusBar("Transfer in/out records for selected source", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#src_transfer_table", DataTable)

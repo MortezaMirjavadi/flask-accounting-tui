@@ -1,10 +1,13 @@
 """Main TUI application."""
 
+import asyncio
+
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header
 
 from tui.screens.auth import LoginScreen
+from tui.sidebar_menu import SidebarMainMenuScreen
 from tui.widgets import ConfirmBox
 
 
@@ -33,8 +36,8 @@ class AccountingApp(App):
 
     .center_screen.form_panel {
         width: 72;
-        height: 1fr;
-        max-height: 85%;
+        height: 2fr;
+        max-height: 100%;
         border: solid $primary;
         padding: 1 2;
         background: $surface;
@@ -352,10 +355,41 @@ class AccountingApp(App):
 
     def __init__(self, **kwargs):
         self.user = None
+        self._sidebar_host_screen = None
+        self._sidebar_embed_loading = False
         super().__init__(**kwargs)
 
     def on_mount(self):
         self.push_screen(LoginScreen())
+
+    def push_screen(self, screen, callback=None, wait_for_dismiss=False, *, mode=None):
+        from tui.widgets.shared import MessageBox, ConfirmBox
+        from tui.sidebar_menu import ContentRenderer
+
+        host_screen = getattr(self, "_sidebar_host_screen", None)
+        if host_screen is not None:
+            # MessageBox & ConfirmBox — show as real modal dialogs
+            if isinstance(screen, (MessageBox, ConfirmBox)):
+                return super().push_screen(
+                    screen,
+                    callback=callback,
+                    wait_for_dismiss=wait_for_dismiss,
+                    mode=mode,
+                )
+
+            # Regular screens — load inside the content area
+            renderer = host_screen.query_one(ContentRenderer)
+            renderer.show_instance(screen, self, callback=callback)
+            future = asyncio.get_running_loop().create_future()
+            future.set_result(None)
+            return future
+
+        return super().push_screen(
+            screen,
+            callback=callback,
+            wait_for_dismiss=wait_for_dismiss,
+            mode=mode,
+        )
 
     def action_quit(self):
         def on_confirm(confirmed: bool):

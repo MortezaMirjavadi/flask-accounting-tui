@@ -22,7 +22,8 @@ class ReportsScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="main_panel center_screen"):
             yield Label("REPORTS", classes="menu_header")
             yield Static("-" * 50, classes="separator")
@@ -34,7 +35,8 @@ class ReportsScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1] Dashboard  [Esc] Back", id="help")
             yield StatusBar("Enter=Select  Esc=Back", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.list_view.index == 0:
@@ -78,7 +80,8 @@ class AdvancedReportScreen(Screen):
         self._report_data = None
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header(show_clock=True)
         with Container(classes="wide_panel center_screen"):
             yield Label("ADVANCED REPORTS", classes="menu_header")
             yield Static(id="report_title")
@@ -89,7 +92,8 @@ class AdvancedReportScreen(Screen):
                 id="help",
             )
             yield StatusBar("Advanced financial reporting dashboard", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self):
         self.load_report()

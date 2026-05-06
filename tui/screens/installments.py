@@ -24,7 +24,8 @@ class InstallmentsScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="main_panel center_screen"):
             yield Label("INSTALLMENTS", classes="menu_header")
             yield Rule()
@@ -37,7 +38,8 @@ class InstallmentsScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-3] Quick select  [Esc] Back", id="help")
             yield StatusBar("Enter=Select  Esc=Back", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         idx = event.list_view.index
@@ -73,7 +75,8 @@ class InstallmentListScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="wide_panel center_screen"):
             yield Label("INSTALLMENT PLANS", classes="menu_header")
             yield Rule()
@@ -104,7 +107,8 @@ class InstallmentListScreen(Screen):
                 id="help",
             )
             yield StatusBar("E=Edit  D=Delete  V=View  P=Pay  C=Cancel  F=Filter  R=Reset  Esc=Back", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#inst_table", DataTable)
@@ -299,7 +303,8 @@ class InstallmentAddScreen(Screen):
     BINDINGS = [Binding("escape", "go_back", "Back")]
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="form_panel center_screen"):
             yield Label("ADD INSTALLMENT PLAN", classes="menu_header")
             yield Rule()
@@ -338,7 +343,8 @@ class InstallmentAddScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self) -> None:
         self._load_categories()
@@ -478,7 +484,8 @@ class InstallmentEditScreen(Screen):
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="form_panel center_screen"):
             yield Label("EDIT INSTALLMENT PLAN", classes="menu_header")
             yield Rule()
@@ -509,7 +516,8 @@ class InstallmentEditScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self) -> None:
         resp = api_get(f"/installments/plans/{self.plan_id}", username=self.app.user.get("username"))
@@ -577,7 +585,8 @@ class InstallmentDetailScreen(Screen):
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="wide_panel center_screen"):
             yield Label("INSTALLMENT PLAN DETAILS", classes="menu_header")
             yield Rule()
@@ -587,7 +596,8 @@ class InstallmentDetailScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [P] Pay  [Esc] Back", id="help")
             yield StatusBar("P=Pay  Esc=Back", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#inst_detail_table", DataTable)
@@ -666,7 +676,8 @@ class InstallmentPayScreen(Screen):
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="form_panel center_screen"):
             yield Label("PAY INSTALLMENTS", classes="menu_header")
             yield Rule()
@@ -681,7 +692,8 @@ class InstallmentPayScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Pay  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Pay  Esc=Cancel", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self) -> None:
         if self.preselected_ids:

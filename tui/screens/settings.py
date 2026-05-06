@@ -18,7 +18,8 @@ class SettingsScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header(show_clock=True)
         with Container(classes="main_panel center_screen"):
             yield Label("SETTINGS", classes="menu_header")
             yield Static("-" * 50, classes="separator")
@@ -30,7 +31,8 @@ class SettingsScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [Enter] Select  [Esc] Back", id="help")
             yield StatusBar("Enter=Select  Esc=Back", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         idx = event.list_view.index

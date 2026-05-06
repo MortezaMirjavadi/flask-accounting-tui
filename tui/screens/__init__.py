@@ -1,7 +1,8 @@
 """Screen modules package."""
 
 from tui.screens.auth import LoginScreen
-from tui.screens.main_menu import MainMenuScreen
+from tui.screens.base import BaseListScreen, DashboardScreen
+from tui.screens.main_menu import MainMenuScreen, SidebarMenuScreen
 from tui.screens.categories import (
     CategoriesScreen,
     CategoryListScreen,
@@ -45,8 +46,12 @@ from tui.screens.settings import SettingsScreen
 __all__ = [
     # Auth
     "LoginScreen",
+    # Base
+    "BaseListScreen",
+    "DashboardScreen",
     # Main Menu
     "MainMenuScreen",
+    "SidebarMenuScreen",
     # Categories
     "CategoriesScreen",
     "CategoryListScreen",

@@ -24,7 +24,8 @@ class ChecksScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="main_panel center_screen"):
             yield Label("CHECKS", classes="menu_header")
             yield Rule()
@@ -37,7 +38,8 @@ class ChecksScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-3] Quick select  [Esc] Back", id="help")
             yield StatusBar("Enter=Select  Esc=Back", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         idx = event.list_view.index
@@ -73,7 +75,8 @@ class CheckListScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="wide_panel center_screen"):
             yield Label("CHECK LIST", classes="menu_header")
             yield Rule()
@@ -115,7 +118,8 @@ class CheckListScreen(Screen):
                 id="help",
             )
             yield StatusBar("E=Edit  D=Delete  C=Clear  B=Bounce  X=Cancel  F=Filter  R=Reset  Esc=Back", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#chk_table", DataTable)
@@ -353,7 +357,8 @@ class CheckAddScreen(Screen):
     BINDINGS = [Binding("escape", "go_back", "Back")]
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="form_panel center_screen"):
             yield Label("ADD CHECK", classes="menu_header")
             yield Rule()
@@ -390,7 +395,8 @@ class CheckAddScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self) -> None:
         self._load_categories()
@@ -508,7 +514,8 @@ class CheckEditScreen(Screen):
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="form_panel center_screen"):
             yield Label("EDIT CHECK", classes="menu_header")
             yield Rule()
@@ -539,7 +546,8 @@ class CheckEditScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self) -> None:
         resp = api_get(f"/checks/{self.chk_id}", username=self.app.user.get("username"))
