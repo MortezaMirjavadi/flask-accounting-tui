@@ -47,5 +47,56 @@ def me():
     result, error = AuthService.get_user_by_username(username)
     if error:
         return jsonify({"error": error}), 404
-    
+
+    return jsonify(result)
+
+
+@bp.route("/setup-2fa", methods=["POST"])
+def setup_2fa():
+    data = request.get_json(force=True, silent=True) or {}
+    username = data.get("username", "").strip()
+    if not username:
+        return jsonify({"error": "Username is required"}), 400
+    result, error = AuthService.setup_totp(username)
+    if error:
+        return jsonify({"error": error}), 400
+    return jsonify(result)
+
+
+@bp.route("/enable-2fa", methods=["POST"])
+def enable_2fa():
+    data = request.get_json(force=True, silent=True) or {}
+    username = data.get("username", "").strip()
+    secret = data.get("secret", "").strip()
+    code = data.get("code", "").strip()
+    if not username or not secret or not code:
+        return jsonify({"error": "Username, secret, and code are required"}), 400
+    result, error = AuthService.enable_totp(username, secret, code)
+    if error:
+        return jsonify({"error": error}), 400
+    return jsonify(result)
+
+
+@bp.route("/disable-2fa", methods=["POST"])
+def disable_2fa():
+    data = request.get_json(force=True, silent=True) or {}
+    username = data.get("username", "").strip()
+    if not username:
+        return jsonify({"error": "Username is required"}), 400
+    result, error = AuthService.disable_totp(username)
+    if error:
+        return jsonify({"error": error}), 400
+    return jsonify(result)
+
+
+@bp.route("/verify-2fa", methods=["POST"])
+def verify_2fa():
+    data = request.get_json(force=True, silent=True) or {}
+    username = data.get("username", "").strip()
+    code = data.get("code", "").strip()
+    if not username or not code:
+        return jsonify({"error": "Username and code are required"}), 400
+    result, error = AuthService.verify_totp(username, code)
+    if error:
+        return jsonify({"error": error}), 400
     return jsonify(result)

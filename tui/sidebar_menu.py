@@ -371,6 +371,8 @@ class ContentRenderer(ContentSwitcher):
                 prev = self.query_one(f"#{prev_id}")
                 self._loaded_screen = prev
                 self.current = prev_id
+                if hasattr(prev, 'load_data'):
+                    prev.load_data()
                 self.call_after_refresh(lambda: prev.refresh(layout=True))
                 self.call_after_refresh(self._focus_first)
                 return True

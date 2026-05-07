@@ -373,6 +373,10 @@ def init_db():
         ):
             _ensure_updated_at_trigger(cursor, table_name)
 
+        # 2FA (TOTP) support for users
+        _ensure_column(cursor, "users", "totp_secret", "VARCHAR(255)")
+        _ensure_column(cursor, "users", "totp_enabled", "BOOLEAN NOT NULL DEFAULT FALSE")
+
         for table_name in (
             "categories",
             "sources",

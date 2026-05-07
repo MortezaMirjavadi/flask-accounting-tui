@@ -701,17 +701,22 @@ class TransactionAddScreen(Screen):
         
         resp = api_post("/transactions", payload, username=self.app.user.get("username"))
         _, err = handle_response(resp)
-        
+
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
         else:
             message = "Transfer added successfully." if is_transfer else "Transaction added successfully."
-            self.app.push_screen(MessageBox(message, "Success"))
-            self.query_one("#tx_date", Input).value = ""
-            self.query_one("#tx_amount", Input).value = ""
-            self.query_one("#tx_desc", TextArea).load_text("")
-            self.query_one("#tx_primary_select", Select).clear()
-            self.query_one("#tx_secondary_select", Select).clear()
+
+            def on_success_dismiss(_):
+                now = datetime.now()
+                jalali_now = jdatetime.datetime.fromgregorian(datetime=now)
+                self.query_one("#tx_date", Input).value = jalali_now.strftime("%Y-%m-%d")
+                self.query_one("#tx_amount", Input).value = ""
+                self.query_one("#tx_desc", TextArea).load_text("")
+                self.query_one("#tx_is_transfer", Checkbox).value = False
+                self.query_one("#tx_date", Input).focus()
+
+            self.app.push_screen(MessageBox(message, "Success"), on_success_dismiss)
 
     def action_toggle_date_picker(self):
         scroll = self.query_one(".form_scroll", VerticalScroll)
@@ -728,11 +733,7 @@ class TransactionAddScreen(Screen):
                 try:
                     parts = date_input.value.strip().split("-")
                     if len(parts) == 3:
-                        g_date = date(int(parts[0]), int(parts[1]), int(parts[2]))
-                        j_date = jdatetime.date.fromgregorian(date=g_date)
-                        picker.year = j_date.year
-                        picker.month = j_date.month
-                        picker.day = j_date.day
+                        picker._set_date(int(parts[0]), int(parts[1]), int(parts[2]))
                 except Exception:
                     pass
             scroll.mount(picker, before=scroll.children[0] if scroll.children else None)
@@ -925,11 +926,7 @@ class TransactionEditScreen(Screen):
                 try:
                     parts = date_input.value.strip().split("-")
                     if len(parts) == 3:
-                        g_date = date(int(parts[0]), int(parts[1]), int(parts[2]))
-                        j_date = jdatetime.date.fromgregorian(date=g_date)
-                        picker.year = j_date.year
-                        picker.month = j_date.month
-                        picker.day = j_date.day
+                        picker._set_date(int(parts[0]), int(parts[1]), int(parts[2]))
                 except Exception:
                     pass
             scroll.mount(picker, before=scroll.children[0] if scroll.children else None)
