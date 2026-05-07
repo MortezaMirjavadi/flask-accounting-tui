@@ -187,6 +187,39 @@ def create_accounting_menu() -> MenuItem:
     )
 
 
+def build_menu_indexes(root: MenuItem) -> tuple[dict[str, MenuItem], dict[str, list[MenuItem]]]:
+    """Build fast lookup maps for menu items and breadcrumb paths."""
+    items_by_id: dict[str, MenuItem] = {}
+    paths_by_id: dict[str, list[MenuItem]] = {}
+
+    def visit(node: MenuItem, path: list[MenuItem]) -> None:
+        current_path = [*path, node]
+        items_by_id[node.id] = node
+        paths_by_id[node.id] = current_path[1:] if node.id == "root" else current_path
+        for child in node.children:
+            visit(child, current_path)
+
+    visit(root, [])
+    return items_by_id, paths_by_id
+
+
+def _screen_class_to_label(class_name: str) -> str:
+    """Convert a screen class name to a human-readable label.
+
+    Examples: TransactionAddScreen -> Transaction Add
+              SourceEditScreen -> Source Edit
+              UserManagementScreen -> User Management
+    """
+    import re
+    # Insert space before each uppercase letter that follows a lowercase letter
+    spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", class_name)
+    # Insert space before uppercase letters that follow other uppercase letters (e.g., "TwoFA" -> "Two FA")
+    spaced = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", spaced)
+    # Remove trailing "Screen" if present
+    spaced = re.sub(r"\s*Screen$", "", spaced)
+    return spaced
+
+
 # =============================================================================
 # Search Tree Widget
 # =============================================================================
@@ -380,6 +413,12 @@ class ContentRenderer(ContentSwitcher):
         self.call_after_refresh(lambda: embedded.refresh(layout=True))
         self.call_after_refresh(self._focus_first)
 
+        # Update breadcrumb with sub-screen label
+        host = getattr(app, "_sidebar_host_screen", None)
+        if host is not None:
+            label = _screen_class_to_label(screen_class.__name__)
+            host._push_breadcrumb_label(label)
+
     def go_back(self) -> bool:
         """Navigate to the previous screen in the stack. Returns True if navigated."""
         while self._nav_stack:
@@ -392,6 +431,10 @@ class ContentRenderer(ContentSwitcher):
                     prev.load_data()
                 self.call_after_refresh(lambda: prev.refresh(layout=True))
                 self.call_after_refresh(self._focus_first)
+                # Restore breadcrumb
+                host = getattr(self.app, "_sidebar_host_screen", None)
+                if host is not None:
+                    host._pop_breadcrumb()
                 return True
             except Exception:
                 continue
@@ -805,11 +848,37 @@ class SidebarMainMenuScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.menu_root = create_accounting_menu()
+        self.menu_items_by_id, self.menu_paths_by_id = build_menu_indexes(self.menu_root)
         self.current_item: Optional[MenuItem] = None
         self._sidebar_visible = True
+        self._breadcrumb_text: str = ""
+        self._breadcrumb_stack: list[str] = []
 
     def _refresh_loaded_content(self) -> None:
         self.query_one(ContentRenderer).refresh_current_screen()
+
+    def _set_breadcrumb_from_path(self, path: list[MenuItem]) -> None:
+        """Render full breadcrumb from a list of MenuItems."""
+        crumbs = []
+        for i, item in enumerate(path):
+            if i > 0:
+                crumbs.append("[dim] > [/dim]")
+            crumbs.append(f"{item.icon} {item.label}")
+        self._breadcrumb_text = "".join(crumbs)
+        self.query_one("#breadcrumb", Static).update(self._breadcrumb_text)
+
+    def _push_breadcrumb_label(self, label: str) -> None:
+        """Append a sub-screen label to the breadcrumb (e.g. for Add/Edit screens)."""
+        self._breadcrumb_stack.append(self._breadcrumb_text)
+        self.query_one("#breadcrumb", Static).update(
+            f"{self._breadcrumb_text}[dim] > [/dim]{label}"
+        )
+
+    def _pop_breadcrumb(self) -> None:
+        """Restore the previous breadcrumb state."""
+        if self._breadcrumb_stack:
+            self._breadcrumb_text = self._breadcrumb_stack.pop()
+            self.query_one("#breadcrumb", Static).update(self._breadcrumb_text)
 
     def action_toggle_sidebar(self) -> None:
         self._sidebar_visible = not self._sidebar_visible
@@ -862,7 +931,9 @@ class SidebarMainMenuScreen(Screen):
                 break
         if dashboard_item and dashboard_item.screen_module:
             self.current_item = dashboard_item
-            self.query_one("#breadcrumb", Static).update(f"📍 {dashboard_item.label}")
+            self._set_breadcrumb_from_path(
+                self.menu_paths_by_id.get(dashboard_item.id, [dashboard_item])
+            )
             self.query_one("#content-description", Static).update(dashboard_item.description or "")
             self._load_screen(dashboard_item)
         else:
@@ -884,7 +955,9 @@ class SidebarMainMenuScreen(Screen):
         item = event.item
         self.current_item = item
 
-        self.query_one("#breadcrumb", Static).update(f"📍 {item.label}")
+        self._set_breadcrumb_from_path(
+            self.menu_paths_by_id.get(item.id, [item])
+        )
         self.query_one("#content-title", Static).update(f"{item.icon} {item.label}")
         self.query_one("#content-description", Static).update(item.description or "")
 
