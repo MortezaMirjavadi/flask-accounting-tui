@@ -206,6 +206,21 @@ class AccountingApp(App):
         width: 2;
     }
 
+    .date_field_row {
+        width: 100%;
+        height: auto;
+    }
+
+    .date_field_row Input {
+        width: 1fr;
+    }
+
+    .date_picker_btn {
+        min-width: 10;
+        width: 10;
+        margin: 0 0 0 1;
+    }
+
     .filter_row {
         width: 100%;
         height: auto;

@@ -554,7 +554,9 @@ class TransactionAddScreen(Screen):
                 with Horizontal(classes="form_row"):
                     with Vertical(classes="form_col"):
                         yield Label("Date (Jalali YYYY-MM-DD):")
-                        yield Input(placeholder="1405-01-31", id="tx_date")
+                        with Horizontal(classes="date_field_row"):
+                            yield Input(placeholder="1405-01-31", id="tx_date")
+                            yield Button("📅", id="btn_date_picker", classes="date_picker_btn")
                     yield Static("", classes="form_col_spacer")
                     with Vertical(classes="form_col"):
                         yield Label("Amount:")
@@ -574,8 +576,8 @@ class TransactionAddScreen(Screen):
                 yield Button("Save", variant="primary", id="save")
                 yield Button("Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
-            yield HelpTip("[Tab] Next field  [Ctrl+D] Date picker  [Enter] Save  [Esc] Cancel", id="help")
-            yield StatusBar("Ctrl+D=Date Picker  Enter=Save  Esc=Cancel", id="status")
+            yield HelpTip("[Tab] Next field  [📅] Date picker  [Enter] Save  [Esc] Cancel", id="help")
+            yield StatusBar("📅=Date Picker  Enter=Save  Esc=Cancel", id="status")
         if not getattr(self, "_sidebar_embedded", False):
             yield Footer()
 
@@ -648,7 +650,17 @@ class TransactionAddScreen(Screen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
             self.save()
-        else:
+        elif event.button.id == "btn_date_picker":
+            self.action_toggle_date_picker()
+        elif event.button.id == "today_btn":
+            try:
+                picker = self.query_one("#tx_date_picker", JalaliDatePicker)
+                self.query_one("#tx_date", Input).value = picker.get_jalali_date()
+                picker.remove()
+                self.query_one("#tx_amount", Input).focus()
+            except Exception:
+                pass
+        elif event.button.id == "cancel":
             self.action_go_back()
 
     def save(self):
@@ -785,7 +797,9 @@ class TransactionEditScreen(Screen):
                 with Horizontal(classes="form_row"):
                     with Vertical(classes="form_col"):
                         yield Label("Date (Jalali YYYY-MM-DD):")
-                        yield Input(placeholder="1405-01-31", id="tx_date")
+                        with Horizontal(classes="date_field_row"):
+                            yield Input(placeholder="1405-01-31", id="tx_date")
+                            yield Button("📅", id="btn_date_picker", classes="date_picker_btn")
                     yield Static("", classes="form_col_spacer")
                     with Vertical(classes="form_col"):
                         yield Label("Amount:")
@@ -805,8 +819,8 @@ class TransactionEditScreen(Screen):
                 yield Button("Save", variant="primary", id="save")
                 yield Button("Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
-            yield HelpTip("[Tab] Next field  [Ctrl+D] Date picker  [Enter] Save  [Esc] Cancel", id="help")
-            yield StatusBar("Ctrl+D=Date Picker  Enter=Save  Esc=Cancel", id="status")
+            yield HelpTip("[Tab] Next field  [📅] Date picker  [Enter] Save  [Esc] Cancel", id="help")
+            yield StatusBar("📅=Date Picker  Enter=Save  Esc=Cancel", id="status")
         if not getattr(self, "_sidebar_embedded", False):
             yield Footer()
 
@@ -951,7 +965,17 @@ class TransactionEditScreen(Screen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
             self.save()
-        else:
+        elif event.button.id == "btn_date_picker":
+            self.action_toggle_date_picker()
+        elif event.button.id == "today_btn":
+            try:
+                picker = self.query_one("#tx_date_picker", JalaliDatePicker)
+                self.query_one("#tx_date", Input).value = picker.get_jalali_date()
+                picker.remove()
+                self.query_one("#tx_amount", Input).focus()
+            except Exception:
+                pass
+        elif event.button.id == "cancel":
             self.action_go_back()
 
     def save(self):
