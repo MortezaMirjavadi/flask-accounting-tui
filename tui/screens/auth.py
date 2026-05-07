@@ -12,7 +12,7 @@ from tui.widgets import HelpTip, MessageBox, StatusBar
 
 class LoginScreen(Screen):
     """Login and registration screen."""
-    
+
     BINDINGS = [
         Binding("escape", "quit", "Exit"),
     ]
@@ -65,23 +65,95 @@ class LoginScreen(Screen):
                 self.app.push_screen(SidebarMainMenuScreen())
 
     def do_register(self):
-        username = self.query_one("#login_user", Input).value.strip()
-        password = self.query_one("#login_pass", Input).value
-        
-        if not username or not password:
-            self.app.push_screen(MessageBox("Username and password are required.", "Validation"))
-            return
-        
-        resp = api_post("/auth/register", {"username": username, "password": password}, username=username)
-        data, err = handle_response(resp)
-        
-        if err:
-            self.app.push_screen(MessageBox(err, "Error"))
-        else:
-            self.app.push_screen(MessageBox("Registration successful. Please log in.", "Success"))
+        self.app.push_screen(RegisterScreen())
 
     def action_quit(self):
         self.app.action_quit()
+
+
+class RegisterScreen(Screen):
+    """Registration form for new users."""
+
+    BINDINGS = [
+        Binding("escape", "go_back", "Back"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Container(classes="form_panel center_screen"):
+            yield Label("NEW USER REGISTRATION", classes="menu_header")
+            yield Rule()
+            with VerticalScroll(classes="form_scroll"):
+                yield Label("Username:")
+                yield Input(placeholder="Username (min 3 characters)", id="reg_user")
+                yield Label("Password:")
+                yield Input(placeholder="Password (min 6 characters)", password=True, id="reg_pass")
+                yield Label("Confirm Password:")
+                yield Input(placeholder="Confirm password", password=True, id="reg_pass_confirm")
+                yield Label("Display Name:")
+                yield Input(placeholder="Your full name", id="reg_display_name")
+                yield Label("Email:")
+                yield Input(placeholder="your@email.com", id="reg_email")
+            yield Static("")
+            with Horizontal(classes="button_row"):
+                yield Button("Submit", variant="primary", id="submit_btn")
+                yield Button("Cancel", variant="default", id="cancel_btn")
+        with Vertical(classes="bottom_bar"):
+            yield HelpTip("[Tab] Next field  [Enter] Submit  [Esc] Cancel", id="help")
+            yield StatusBar("Fill all fields  Enter=Submit  Esc=Back", id="status")
+        yield Footer()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "submit_btn":
+            self.do_submit()
+        elif event.button.id == "cancel_btn":
+            self.action_go_back()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.do_submit()
+
+    def do_submit(self):
+        username = self.query_one("#reg_user", Input).value.strip()
+        password = self.query_one("#reg_pass", Input).value
+        confirm = self.query_one("#reg_pass_confirm", Input).value
+        display_name = self.query_one("#reg_display_name", Input).value.strip()
+        email = self.query_one("#reg_email", Input).value.strip()
+
+        if not username or not password:
+            self.app.push_screen(MessageBox("Username and password are required.", "Validation"))
+            return
+
+        if password != confirm:
+            self.app.push_screen(MessageBox("Passwords do not match.", "Validation"))
+            return
+
+        payload = {
+            "username": username,
+            "password": password,
+        }
+        if display_name:
+            payload["display_name"] = display_name
+        if email:
+            payload["email"] = email
+
+        resp = api_post("/auth/register", payload, username=username)
+        data, err = handle_response(resp)
+
+        if err:
+            self.app.push_screen(MessageBox(err, "Error"))
+        else:
+            self.app.push_screen(
+                MessageBox(
+                    "Registration submitted successfully!\n\n"
+                    "Your account is pending admin approval.\n"
+                    "You will be able to log in once an admin approves your account.",
+                    "Registration Pending",
+                ),
+                lambda _: self.app.pop_screen(),
+            )
+
+    def action_go_back(self):
+        self.app.pop_screen()
 
 
 class TwoFAVerifyScreen(Screen):

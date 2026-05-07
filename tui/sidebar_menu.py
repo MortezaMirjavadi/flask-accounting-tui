@@ -37,6 +37,7 @@ class MenuItem:
     action: str = ""
     children: list[MenuItem] = field(default_factory=list)
     badge: Optional[str] = None
+    admin_only: bool = False
 
     def to_tree_label(self) -> str:
         badge_str = f" [{self.badge}]" if self.badge else ""
@@ -169,6 +170,10 @@ def create_accounting_menu() -> MenuItem:
                 id="system", label="System", icon="⚙️",
                 description="System settings and account",
                 children=[
+                    MenuItem(id="user-mgmt", label="User Management", icon="👥",
+                             description="Approve or reject user registrations",
+                             screen_module="tui.screens.users", screen_class="UserManagementScreen",
+                             admin_only=True),
                     MenuItem(id="settings", label="Settings", icon="🔧",
                              description="Application settings",
                              screen_module="tui.screens.settings", screen_class="SettingsScreen"),
@@ -198,11 +203,14 @@ class SearchTree(Tree):
         super().__init__(menu_root.label, **kwargs)
         self.menu_root = menu_root
         self._last_query = ""
+        self._is_admin = True  # default: show everything until filtered
         self._build_tree(self.root, menu_root)
         self.root.expand_all()
 
     def _build_tree(self, tree_node: TreeNode, menu_item: MenuItem):
         for child in menu_item.children:
+            if child.admin_only and not self._is_admin:
+                continue
             label = child.to_tree_label()
             child_node = tree_node.add(label, data=child, allow_expand=bool(child.children))
             if child.children:
@@ -239,6 +247,8 @@ class SearchTree(Tree):
     def _build_filtered_tree(self, tree_node: TreeNode, menu_item: MenuItem, matches: list[MenuItem]):
         match_ids = {m.id for m in matches}
         for child in menu_item.children:
+            if child.admin_only and not self._is_admin:
+                continue
             should_include = child.id in match_ids or self._has_matching_descendant(child, match_ids)
             if should_include:
                 label = child.to_tree_label()
@@ -255,6 +265,13 @@ class SearchTree(Tree):
             if self._has_matching_descendant(child, match_ids):
                 return True
         return False
+
+    def filter_admin_only(self, is_admin: bool) -> None:
+        """Rebuild tree, hiding admin-only items for non-admin users."""
+        self._is_admin = is_admin
+        self.root.remove_children()
+        self._build_tree(self.root, self.menu_root)
+        self.root.expand_all()
 
 
 # =============================================================================
@@ -810,7 +827,7 @@ class SidebarMainMenuScreen(Screen):
         yield Header(show_clock=True)
 
         with Vertical(id="sidebar"):
-            yield Static("⚡ Cached Menu", id="sidebar-header")
+            yield Static("⚡ Personal Accounting", id="sidebar-header")
             with Container(id="search-container"):
                 yield Input(placeholder="Search menu...", id="search-input")
             yield SearchTree(self.menu_root, id="menu-tree")
@@ -831,7 +848,12 @@ class SidebarMainMenuScreen(Screen):
         self.app._sidebar_host_screen = self
         user = getattr(self.app, "user", None)
         username = user.get("username", "User") if user else "User"
+        is_admin = user.get("is_admin", False) if user else False
         self.query_one("#content-title", Static).update(f"Welcome, {username}!")
+
+        # Hide admin-only menu items for non-admin users
+        self.query_one("#menu-tree", SearchTree).filter_admin_only(is_admin)
+
         # Auto-load dashboard as the default view
         dashboard_item = None
         for child in self.menu_root.children:
@@ -932,6 +954,7 @@ class SidebarMainMenuScreen(Screen):
 
     def action_logout(self):
         self.app.user = None
+        self.app._sidebar_host_screen = None
         while len(self.app.screen_stack) > 1:
             self.app.pop_screen()
         from tui.screens.auth import LoginScreen

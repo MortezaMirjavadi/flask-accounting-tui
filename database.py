@@ -377,6 +377,13 @@ def init_db():
         _ensure_column(cursor, "users", "totp_secret", "VARCHAR(255)")
         _ensure_column(cursor, "users", "totp_enabled", "BOOLEAN NOT NULL DEFAULT FALSE")
 
+        # Registration approval and admin role
+        _ensure_column(cursor, "users", "is_admin", "BOOLEAN NOT NULL DEFAULT FALSE")
+        _ensure_column(cursor, "users", "is_approved", "BOOLEAN NOT NULL DEFAULT FALSE")
+        _ensure_column(cursor, "users", "is_active", "BOOLEAN NOT NULL DEFAULT TRUE")
+        _ensure_column(cursor, "users", "display_name", "VARCHAR(255)")
+        _ensure_column(cursor, "users", "email", "VARCHAR(255)")
+
         for table_name in (
             "categories",
             "sources",
