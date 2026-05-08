@@ -28,7 +28,8 @@ class BudgetScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header(show_clock=True)
         with Container(classes="main_panel center_screen"):
             yield Label("BUDGET MANAGEMENT", classes="menu_header")
             yield Rule()
@@ -42,7 +43,8 @@ class BudgetScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-3] Quick select  [Esc] Back", id="help")
             yield StatusBar("Enter=Select  Esc=Back", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         idx = event.list_view.index
@@ -78,7 +80,8 @@ class BudgetTreeScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header(show_clock=True)
         with Container(classes="wide_panel center_screen"):
             yield Label("BUDGET TREE VIEW", classes="detail_header")
             yield Rule()
@@ -87,7 +90,8 @@ class BudgetTreeScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [Enter] Select Period/Item  [R] Refresh  [Esc] Back", id="help")
             yield StatusBar("Loading...", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self):
         self.load_tree()
@@ -183,7 +187,8 @@ class BudgetPeriodListScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header(show_clock=True)
         with Container(classes="wide_panel center_screen"):
             yield Label("BUDGET PERIODS", classes="detail_header")
             yield Rule()
@@ -191,7 +196,8 @@ class BudgetPeriodListScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [A] Add  [E] Edit  [D] Delete  [I] Items  [Esc] Back", id="help")
             yield StatusBar("Loading...", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self):
         table = self.query_one("#periods_table", DataTable)
@@ -300,7 +306,8 @@ class BudgetPeriodAddScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header(show_clock=True)
         with Container(classes="main_panel center_screen"):
             yield Label("ADD BUDGET PERIOD", classes="detail_header")
             yield Rule()
@@ -314,7 +321,8 @@ class BudgetPeriodAddScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Fill in the fields and press Save", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save_btn":
@@ -368,7 +376,8 @@ class BudgetPeriodEditScreen(Screen):
         self.period_id = period_id
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header(show_clock=True)
         with Container(classes="main_panel center_screen"):
             yield Label("EDIT BUDGET PERIOD", classes="detail_header")
             yield Rule()
@@ -382,7 +391,8 @@ class BudgetPeriodEditScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Loading...", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self):
         self.load_period()
@@ -457,7 +467,8 @@ class BudgetItemListScreen(Screen):
         self.month = month
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header(show_clock=True)
         with Container(classes="wide_panel center_screen"):
             month_name = get_persian_month_name(self.month)
             yield Label(f"BUDGET ITEMS - {self.year}/{self.month} ({month_name})", classes="detail_header")
@@ -466,7 +477,8 @@ class BudgetItemListScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [A] Add  [E] Edit  [D] Delete  [Esc] Back", id="help")
             yield StatusBar("Loading...", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self):
         table = self.query_one("#items_table", DataTable)
@@ -550,7 +562,8 @@ class BudgetItemAddScreen(Screen):
         self.period_id = period_id
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header(show_clock=True)
         with Container(classes="main_panel center_screen"):
             yield Label("ADD BUDGET ITEM", classes="detail_header")
             yield Rule()
@@ -566,7 +579,8 @@ class BudgetItemAddScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Loading categories...", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self):
         self.load_categories()
@@ -642,7 +656,8 @@ class BudgetItemEditScreen(Screen):
         self.item_id = item_id
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header(show_clock=True)
         with Container(classes="main_panel center_screen"):
             yield Label("EDIT BUDGET ITEM", classes="detail_header")
             yield Rule()
@@ -658,7 +673,8 @@ class BudgetItemEditScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Loading...", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self):
         self.load_categories()
@@ -745,7 +761,8 @@ class BudgetReportScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header(show_clock=True)
         with Container(classes="wide_panel center_screen"):
             yield Label("BUDGET REPORT", classes="detail_header")
             yield Rule()
@@ -760,7 +777,8 @@ class BudgetReportScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Navigate  [Enter] Load  [R] Refresh  [Esc] Back", id="help")
             yield StatusBar("Enter year and month, then press Load Report", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self):
         table = self.query_one("#report_table", DataTable)

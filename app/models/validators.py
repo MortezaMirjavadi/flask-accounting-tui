@@ -135,3 +135,188 @@ def validate_budget_item_payload(data):
         "planned_amount": planned_amount,
         "notes": notes
     }
+
+
+def validate_installment_plan_payload(data):
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise ValueError("Invalid payload")
+
+    title = (data.get("title") or "").strip()
+    total_amount = data.get("total_amount")
+    installment_count = data.get("installment_count")
+    installment_amount = data.get("installment_amount")
+    start_date = (data.get("start_date") or "").strip()
+    due_day_of_month = data.get("due_day_of_month")
+    category_id = data.get("category_id")
+    source_id = data.get("source_id")
+    status = (data.get("status") or "active").strip().lower()
+
+    if not title:
+        raise ValueError("title is required")
+
+    try:
+        total_amount = float(total_amount)
+        if total_amount <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ValueError("Valid positive total_amount is required")
+
+    try:
+        installment_count = int(installment_count)
+        if installment_count <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ValueError("installment_count must be greater than zero")
+
+    if not start_date:
+        raise ValueError("start_date is required")
+
+    if due_day_of_month is None or due_day_of_month == "":
+        due_day_of_month = int(start_date.split("-")[2]) if isinstance(start_date, str) else None
+    else:
+        try:
+            due_day_of_month = int(due_day_of_month)
+            if not 1 <= due_day_of_month <= 31:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValueError("due_day_of_month must be an integer between 1 and 31")
+
+    try:
+        category_id = int(category_id)
+        if category_id <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ValueError("Valid category_id is required")
+
+    if source_id is not None:
+        try:
+            source_id = int(source_id)
+            if source_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValueError("source_id must be a positive integer")
+
+    if installment_amount is not None:
+        try:
+            installment_amount = float(installment_amount)
+            if installment_amount <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValueError("installment_amount must be greater than zero")
+
+    if status not in ("active", "completed", "canceled"):
+        raise ValueError("status must be active, completed, or canceled")
+
+    return {
+        "title": title,
+        "total_amount": total_amount,
+        "installment_count": installment_count,
+        "installment_amount": installment_amount,
+        "start_date": start_date,
+        "due_day_of_month": due_day_of_month,
+        "category_id": category_id,
+        "source_id": source_id,
+        "status": status,
+    }
+
+
+def validate_installment_payment_payload(data):
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise ValueError("Invalid payload")
+
+    installment_ids = data.get("installment_ids")
+    paid_date = (data.get("paid_date") or "").strip()
+
+    if installment_ids is None:
+        raise ValueError("installment_ids is required")
+    if isinstance(installment_ids, int):
+        installment_ids = [installment_ids]
+    if not isinstance(installment_ids, list) or len(installment_ids) == 0:
+        raise ValueError("installment_ids must be a non-empty integer list")
+    cleaned_ids = []
+    for item in installment_ids:
+        if item is None:
+            raise ValueError("installment_ids must contain integers")
+        try:
+            item_id = int(item)
+        except (TypeError, ValueError):
+            raise ValueError("installment_ids must contain integers")
+        if item_id <= 0:
+            raise ValueError("installment_ids must contain positive integers")
+        cleaned_ids.append(item_id)
+
+    if paid_date:
+        paid_date = jalali_to_gregorian(paid_date)
+    else:
+        paid_date = None
+
+    return {"installment_ids": cleaned_ids, "paid_date": paid_date}
+
+
+def validate_check_payload(data):
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise ValueError("Invalid payload")
+
+    check_type = (data.get("type") or "").strip().lower()
+    if check_type not in ("issued", "received"):
+        raise ValueError("type must be 'issued' or 'received'")
+
+    check_number = (data.get("check_number") or "").strip() or None
+    bank_name = (data.get("bank_name") or "").strip() or None
+    amount = data.get("amount")
+    issue_date = (data.get("issue_date") or "").strip()
+    due_date = (data.get("due_date") or "").strip()
+    category_id = data.get("category_id")
+    source_id = data.get("source_id")
+    description = (data.get("description") or "").strip() or None
+
+    if not issue_date:
+        raise ValueError("issue_date is required")
+    if not due_date:
+        raise ValueError("due_date is required")
+
+    issue_date = jalali_to_gregorian(issue_date)
+    due_date = jalali_to_gregorian(due_date)
+
+    try:
+        amount = float(amount)
+        if amount <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ValueError("Valid positive amount is required")
+
+    try:
+        category_id = int(category_id)
+        if category_id <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ValueError("Valid category_id is required")
+
+    if source_id is not None:
+        try:
+            source_id = int(source_id)
+            if source_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValueError("source_id must be a positive integer")
+
+    if due_date < issue_date:
+        raise ValueError("due_date cannot be earlier than issue_date")
+
+    return {
+        "check_number": check_number,
+        "bank_name": bank_name,
+        "amount": amount,
+        "issue_date": issue_date,
+        "due_date": due_date,
+        "type": check_type,
+        "source_id": source_id,
+        "category_id": category_id,
+        "description": description,
+    }

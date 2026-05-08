@@ -6,23 +6,22 @@ Features: Nested menu tree, real-time search filtering,
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
-from typing import Optional, Callable, Any
-from pathlib import Path
+from typing import Optional
 
 from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import (
-    Tree, Input, Static, Header, Footer, 
-    Markdown, DataTable, ListView, ListItem, Button,
-    TabbedContent, TabPane, Select, Switch, ProgressBar
+    Tree, Input, Static, Header, Footer, Markdown, DataTable, ListView,
+    ListItem, Button, TabbedContent, TabPane, Select, Switch, ProgressBar,
+    Checkbox, Collapsible, ContentSwitcher, Digits, DirectoryTree,
+    LoadingIndicator, Log, MaskedInput, OptionList, RadioButton, RadioSet,
+    SelectionList, Sparkline, Tabs, TextArea
 )
 from textual.widgets.tree import TreeNode
 from textual.containers import (
     Horizontal, Vertical, Container, ScrollableContainer, Grid
 )
-from textual.reactive import reactive
 from textual.binding import Binding
 from textual.widget import Widget
 from textual.message import Message
@@ -77,14 +76,18 @@ class MenuItem:
         results = []
         query_lower = query.lower()
         
-        if (query_lower in self.label.lower() or 
-            query_lower in self.description.lower()):
+        if query_lower in self.search_text:
             results.append(self)
         
         for child in self.children:
             results.extend(child.search(query))
         
         return results
+
+    @property
+    def search_text(self) -> str:
+        """Lower-cased searchable text cached by Python property access."""
+        return f"{self.id} {self.label} {self.description}".lower()
 
 
 # =============================================================================
@@ -288,7 +291,7 @@ def create_sample_menu() -> MenuItem:
                         label="General",
                         icon="🔧",
                         description="General settings",
-                        content_type="form"
+                        content_type="complex_form"
                     ),
                     MenuItem(
                         id="settings-security",
@@ -366,6 +369,22 @@ def create_sample_menu() -> MenuItem:
     )
 
 
+def build_menu_indexes(root: MenuItem) -> tuple[dict[str, MenuItem], dict[str, list[MenuItem]]]:
+    """Build fast lookup maps for menu items and breadcrumb paths."""
+    items_by_id: dict[str, MenuItem] = {}
+    paths_by_id: dict[str, list[MenuItem]] = {}
+
+    def visit(node: MenuItem, path: list[MenuItem]) -> None:
+        current_path = [*path, node]
+        items_by_id[node.id] = node
+        paths_by_id[node.id] = current_path[1:] if node.id == "root" else current_path
+        for child in node.children:
+            visit(child, current_path)
+
+    visit(root, [])
+    return items_by_id, paths_by_id
+
+
 # =============================================================================
 # Custom Widgets
 # =============================================================================
@@ -408,8 +427,8 @@ class SearchTree(Tree[MenuItem]):
     def __init__(self, root: MenuItem, **kwargs):
         super().__init__(root.label, data=root, **kwargs)
         self.root_data = root
-        self._search_query: str = ""
         self._expanded_nodes: set[str] = set()
+        self._last_filter_text: Optional[str] = None
     
     def build_tree(self, node: "TreeNode", menu_item: MenuItem, filter_text: str = "") -> None:
         """Build tree nodes recursively with optional filtering."""
@@ -439,6 +458,9 @@ class SearchTree(Tree[MenuItem]):
     
     def refresh_tree(self, filter_text: str = "") -> None:
         """Rebuild tree with optional filter."""
+        if filter_text == self._last_filter_text:
+            return
+        self._last_filter_text = filter_text
         self.clear()
         self.root.remove_children()
         self.build_tree(self.root, self.root_data, filter_text)
@@ -446,8 +468,7 @@ class SearchTree(Tree[MenuItem]):
     
     def on_tree_node_selected(self, event: "TreeNode.Selected") -> None:
         """Handle node selection."""
-        if event.node.data and not event.node.data.children:
-            # Only select leaf nodes or nodes with content
+        if event.node.data and event.node.data.id != "root":
             self.post_message(self.MenuSelected(event.node.data))
     
     def on_tree_node_expanded(self, event: "TreeNode.Expanded") -> None:
@@ -511,8 +532,118 @@ class Breadcrumb(Static):
         self.update("".join(crumbs))
 
 
-class ContentRenderer(Static):
-    """Renders different content types dynamically."""
+class MenuContentView(Widget):
+    """Base widget for a lazily loaded menu view."""
+
+    def __init__(self, menu_item: MenuItem, **kwargs):
+        super().__init__(**kwargs)
+        self.menu_item = menu_item
+
+
+class TextContentView(MenuContentView):
+    """Lightweight text-based content view."""
+
+    def compose(self) -> ComposeResult:
+        content = self.menu_item.content or f"# {self.menu_item.label}\n\n{self.menu_item.description}"
+        yield Static(content, classes="content-markdown")
+
+
+class TableContentView(MenuContentView):
+    """Table-based content view."""
+
+    def compose(self) -> ComposeResult:
+        yield DataTable(classes="data-table")
+
+    def on_mount(self) -> None:
+        table = self.query_one(DataTable)
+        table.cursor_type = "row"
+        table.zebra_stripes = True
+        columns = self.menu_item.data.get("columns", ["ID", "Name", "Status", "Date"])
+        for col in columns:
+            table.add_column(col, width=15)
+
+        rows = [
+            (f"#{1000 + index}", f"{self.menu_item.label} {index + 1}", status, "2024-01-15")
+            for index, status in enumerate([
+                "Active", "Pending", "Inactive", "Active", "Pending",
+                "Active", "Inactive", "Active", "Pending", "Active",
+            ])
+        ]
+        for row in rows:
+            table.add_row(*row)
+
+
+class FormContentView(MenuContentView):
+    """Form summary content view."""
+
+    def compose(self) -> ComposeResult:
+        fields = self.menu_item.data.get("fields", [
+            ("Name", "text", "Enter name..."),
+            ("Email", "email", "Enter email..."),
+            ("Role", "select", "Select role..."),
+            ("Enabled", "toggle", ""),
+        ])
+        lines = [
+            f"# {self.menu_item.icon} {self.menu_item.label}",
+            "",
+            self.menu_item.description or "Configuration screen",
+            "",
+            "## Fields",
+        ]
+        for field_name, field_type, placeholder in fields:
+            detail = placeholder or "Toggle option"
+            lines.append(f"- **{field_name}** ({field_type}): {detail}")
+        lines.extend(["", "[green]Save[/green]  [red]Cancel[/red]"])
+        yield Static("\n".join(lines), classes="content-markdown")
+
+
+class DashboardContentView(MenuContentView):
+    """Dashboard summary content view."""
+
+    def compose(self) -> ComposeResult:
+        stats = [
+            ("Total Revenue", "$124,500", "+12%"),
+            ("Active Users", "1,234", "+5%"),
+            ("Conversion", "3.2%", "-0.5%"),
+            ("Avg Order", "$85.50", "+8%"),
+        ]
+        lines = [
+            f"# {self.menu_item.icon} {self.menu_item.label}",
+            "",
+            self.menu_item.description or "Dashboard overview",
+            "",
+            "## KPIs",
+        ]
+        for label, value, change in stats:
+            lines.append(f"- **{label}**: {value} ({change})")
+        lines.extend([
+            "",
+            "## Activity",
+            "- ██████████",
+            "- ███████",
+            "- █████████████",
+            "- ██████",
+        ])
+        yield Static("\n".join(lines), classes="content-markdown")
+
+
+class ListContentView(MenuContentView):
+    """List summary content view."""
+
+    def compose(self) -> ComposeResult:
+        lines = [
+            f"# {self.menu_item.icon} {self.menu_item.label}",
+            "",
+            self.menu_item.description or "List view",
+            "",
+            "## Items",
+        ]
+        lines.extend(f"- Item {i + 1} for {self.menu_item.label} — 2 hours ago" for i in range(15))
+        yield Static("\n".join(lines), classes="content-markdown")
+
+
+class ContentRenderer(ContentSwitcher):
+    """Hosts lazily created menu widgets in the content area."""
     
     DEFAULT_CSS = """
     ContentRenderer {
@@ -523,139 +654,155 @@ class ContentRenderer(Static):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.current_widget: Optional[Widget] = None
-    
-    def render_content(self, menu_item: MenuItem) -> ComposeResult:
-        """Render appropriate content based on type."""
-        # Remove previous content
-        for child in list(self.children):
-            child.remove()
-        
+        self._view_cache: dict[str, Widget] = {}
+
+    def show_menu_item(self, menu_item: MenuItem) -> None:
+        """Show a cached content view for the selected menu item."""
+        widget = self._view_cache.get(menu_item.id)
+        if widget is None:
+            widget = self._create_view(menu_item)
+            widget.id = f"view-{menu_item.id}"
+            self._view_cache[menu_item.id] = widget
+            self.mount(widget)
+        self.current = widget.id
+
+    def _create_view(self, menu_item: MenuItem) -> Widget:
+        """Create a menu widget once, then reuse it."""
         content_type = menu_item.content_type
-        
         if content_type == "markdown":
-            yield self._render_markdown(menu_item)
-        elif content_type == "table":
-            yield self._render_table(menu_item)
-        elif content_type == "form":
-            yield self._render_form(menu_item)
-        elif content_type == "dashboard":
-            yield self._render_dashboard(menu_item)
-        elif content_type == "list":
-            yield self._render_list(menu_item)
-        else:
-            yield Static(f"Unknown content type: {content_type}")
-    
-    def _render_markdown(self, item: MenuItem) -> Widget:
-        """Render markdown content."""
-        content = item.content or f"# {item.label}\n\n{item.description}"
-        return Markdown(content, classes="content-markdown")
-    
-    def _render_table(self, item: MenuItem) -> Widget:
-        """Render data table."""
-        container = Vertical(classes="content-table")
-        
-        # Sample data based on item
-        table = DataTable(classes="data-table")
+            return TextContentView(menu_item)
+        if content_type == "table":
+            return TableContentView(menu_item)
+        if content_type == "form":
+            return FormContentView(menu_item)
+        if content_type == "complex_form":
+            return ComplexWidgetForm(menu_item)
+        if content_type == "dashboard":
+            return DashboardContentView(menu_item)
+        if content_type == "list":
+            return ListContentView(menu_item)
+        return Static(f"Unknown content type: {content_type}")
+
+
+class ComplexWidgetForm(ScrollableContainer):
+    """Rich widget showcase embedded in the content area."""
+
+    def __init__(self, item: MenuItem, **kwargs):
+        super().__init__(**kwargs)
+        self.item = item
+        self._heavy_widgets_initialized = False
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            f"{self.item.icon} {self.item.label} — {self.item.description}",
+            classes="form-title",
+        )
+
+        with Collapsible(title="Primary Inputs", collapsed=False):
+            yield Input(placeholder="Full name", id="complex-name")
+            yield MaskedInput(template="9999-99-99", id="complex-date")
+            yield TextArea("Notes, comments, and longer form content...", id="complex-notes")
+            yield Checkbox("Email notifications", value=True, id="complex-checkbox")
+            yield Switch(value=True, id="complex-switch")
+            yield Select(
+                [("Admin", "admin"), ("Editor", "editor"), ("Viewer", "viewer")],
+                prompt="Choose a role",
+                id="complex-select",
+            )
+            yield SelectionList(
+                ("Billing", "billing", True),
+                ("Reports", "reports", False),
+                ("Exports", "exports", True),
+                id="complex-selection-list",
+            )
+            yield RadioSet(
+                RadioButton("Daily", id="radio-daily"),
+                RadioButton("Weekly", id="radio-weekly"),
+                RadioButton("Monthly", id="radio-monthly"),
+                id="complex-radio-set",
+            )
+
+        with Collapsible(title="Choices And Navigation", collapsed=False):
+            yield Tabs("Overview", "Files", "Preview", id="complex-tabs")
+            with ContentSwitcher(initial="switch-summary", id="complex-switcher"):
+                with Container(id="switch-summary"):
+                    yield Static("Summary content inside ContentSwitcher.")
+                with Container(id="switch-files"):
+                    yield Static("Files view inside ContentSwitcher.")
+                with Container(id="switch-preview"):
+                    yield Static("Preview view inside ContentSwitcher.")
+            yield OptionList("Create", "Duplicate", "Archive", "Delete", id="complex-options")
+            yield ListView(
+                ListItem(Static("Review draft")),
+                ListItem(Static("Assign owner")),
+                ListItem(Static("Publish changes")),
+                id="complex-list-view",
+            )
+
+        with Collapsible(title="Metrics", collapsed=False):
+            yield Digits("12890", id="complex-digits")
+            yield Sparkline([4, 8, 7, 12, 6, 15, 13, 18, 14, 20], id="complex-sparkline")
+            yield ProgressBar(total=100, show_eta=False, id="complex-progress")
+            yield Static("Metrics update instantly without reloading the whole screen.")
+
+        with Collapsible(title="Structured Data", collapsed=False):
+            yield DataTable(id="complex-table")
+            yield Tree("Project Tree", id="complex-tree")
+            yield Static("Open the advanced area below to load file explorer and logs.")
+
+        with Collapsible(title="Advanced Widgets", collapsed=True, id="advanced-widgets"):
+            yield LoadingIndicator(id="complex-loader")
+            yield DirectoryTree(".", id="complex-directory-tree")
+            yield Log(id="complex-log")
+
+        with Collapsible(title="Tabbed Content", collapsed=True):
+            with TabbedContent(initial="details"):
+                with TabPane("Details", id="details"):
+                    yield Static("Tabbed content details pane.")
+                with TabPane("Activity", id="activity"):
+                    yield Static("Tabbed content activity pane.")
+                with TabPane("Preview", id="preview"):
+                    yield Static("Tabbed content preview pane.")
+
+        with Horizontal(classes="form-actions"):
+            yield Button("Save", variant="success", id="btn-save")
+            yield Button("Validate", variant="primary", id="btn-validate")
+            yield Button("Cancel", variant="error", id="btn-cancel")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#complex-table", DataTable)
         table.cursor_type = "row"
         table.zebra_stripes = True
-        
-        columns = item.data.get("columns", ["ID", "Name", "Status", "Date"])
-        for col in columns:
-            table.add_column(col, width=15)
-        
-        # Generate sample rows
-        import random
-        for i in range(20):
-            status = random.choice(["Active", "Pending", "Inactive"])
-            status_color = {"Active": "green", "Pending": "yellow", "Inactive": "red"}[status]
-            row = [
-                f"#{1000 + i}",
-                f"Sample {item.label} {i+1}",
-                f"[{status_color}]{status}[/{status_color}]",
-                "2024-01-15"
-            ]
-            table.add_row(*row)
-        
-        return table
-    
-    def _render_form(self, item: MenuItem) -> Widget:
-        """Render configuration form."""
-        container = ScrollableContainer(classes="content-form")
-        
-        with container:
-            yield Static(f"## {item.icon} {item.label}", classes="form-title")
-            yield Static(item.description, classes="form-description")
-            
-            # Sample form fields
-            fields = item.data.get("fields", [
-                ("Name", "text", "Enter name..."),
-                ("Email", "email", "Enter email..."),
-                ("Role", "select", "Select role..."),
-                ("Enabled", "toggle", ""),
-            ])
-            
-            for field_name, field_type, placeholder in fields:
-                with Horizontal(classes="form-row"):
-                    yield Static(f"{field_name}:", classes="form-label")
-                    if field_type == "toggle":
-                        yield Switch(value=True, classes="form-input")
-                    elif field_type == "select":
-                        yield Select([("Option 1", "1"), ("Option 2", "2")], classes="form-input")
-                    else:
-                        yield Input(placeholder=placeholder, classes="form-input")
-            
-            with Horizontal(classes="form-actions"):
-                yield Button("Save", variant="success", id="btn-save")
-                yield Button("Cancel", variant="error", id="btn-cancel")
-        
-        return container
-    
-    def _render_dashboard(self, item: MenuItem) -> Widget:
-        """Render dashboard with widgets."""
-        grid = Grid(classes="content-dashboard")
-        grid.styles.grid_size_rows = 2
-        grid.styles.grid_size_columns = 2
-        grid.styles.height = "100%"
-        
-        with grid:
-            # Stats cards
-            for i, (label, value, change) in enumerate([
-                ("Total Revenue", "$124,500", "+12%"),
-                ("Active Users", "1,234", "+5%"),
-                ("Conversion", "3.2%", "-0.5%"),
-                ("Avg Order", "$85.50", "+8%"),
-            ]):
-                with Container(classes="dashboard-card"):
-                    yield Static(label, classes="card-label")
-                    yield Static(value, classes="card-value")
-                    color = "green" if "+" in change else "red"
-                    yield Static(f"[{color}]{change}[/{color}]", classes="card-change")
-            
-            # Chart placeholder
-            with Container(classes="dashboard-chart"):
-                yield Static(f"## {item.label} Chart", classes="chart-title")
-                # Simple bar chart using text
-                bars = ["█" * random.randint(5, 20) for _ in range(10)]
-                for bar in bars:
-                    yield Static(bar, classes="chart-bar")
-        
-        return grid
-    
-    def _render_list(self, item: MenuItem) -> Widget:
-        """Render list view."""
-        container = Vertical(classes="content-list")
-        
-        with container:
-            yield Static(f"## {item.icon} {item.label}", classes="list-title")
-            
-            # Sample list items
-            for i in range(15):
-                with Horizontal(classes="list-row"):
-                    yield Static(f"● Item {i+1} for {item.label}")
-                    yield Static("2 hours ago", classes="list-time")
-        
-        return container
+        table.add_columns("Field", "Value", "Status")
+        table.add_row("Profile", "Configured", "Ready")
+        table.add_row("Security", "2FA Enabled", "Healthy")
+        table.add_row("Storage", "128 GB", "Warning")
+        table.add_row("Backups", "Nightly", "Ready")
+
+        form_tree = self.query_one("#complex-tree", Tree)
+        root = form_tree.root
+        identity = root.add("Identity")
+        identity.add_leaf("Name")
+        identity.add_leaf("Date")
+        preferences = root.add("Preferences")
+        preferences.add_leaf("Notifications")
+        preferences.add_leaf("Access")
+        root.expand_all()
+
+        progress = self.query_one("#complex-progress", ProgressBar)
+        progress.update(progress=72)
+
+    def on_collapsible_toggled(self, event: Collapsible.Toggled) -> None:
+        """Load heavier widgets only when needed."""
+        if event.collapsible.id != "advanced-widgets":
+            return
+        if event.collapsible.collapsed or self._heavy_widgets_initialized:
+            return
+
+        log = self.query_one("#complex-log", Log)
+        log.write_line("Advanced widgets initialized")
+        log.write_line("Directory tree and log are ready")
+        self._heavy_widgets_initialized = True
 
 
 # =============================================================================
@@ -913,8 +1060,10 @@ class SidebarAppScreen(Screen):
     def __init__(self):
         super().__init__()
         self.menu_root = create_sample_menu()
+        self.menu_items_by_id, self.menu_paths_by_id = build_menu_indexes(self.menu_root)
         self.current_item: Optional[MenuItem] = None
         self.search_results: list[MenuItem] = []
+        self._last_search_query = ""
     
     def compose(self) -> ComposeResult:
         yield Header()
@@ -960,6 +1109,8 @@ class SidebarAppScreen(Screen):
         tree = self.query_one("#menu-tree", SearchTree)
         tree.refresh_tree()
         tree.focus()
+        if self.menu_root.children:
+            self._load_content(self.menu_root.children[0])
     
     def on_search_tree_menu_selected(self, event: SearchTree.MenuSelected) -> None:
         """Handle menu selection from tree."""
@@ -983,6 +1134,9 @@ class SidebarAppScreen(Screen):
         """Perform search and update UI."""
         results_display = self.query_one("#search-results", Static)
         tree = self.query_one("#menu-tree", SearchTree)
+        if query == self._last_search_query:
+            return
+        self._last_search_query = query
         
         if not query:
             tree.refresh_tree()
@@ -1006,6 +1160,7 @@ class SidebarAppScreen(Screen):
         """Clear search and restore normal tree view."""
         search_input = self.query_one("#search-input", Input)
         search_input.value = ""
+        self._last_search_query = ""
         
         results_display = self.query_one("#search-results", Static)
         results_display.remove_class("visible")
@@ -1017,11 +1172,14 @@ class SidebarAppScreen(Screen):
     
     def _load_content(self, item: MenuItem) -> None:
         """Load content for selected menu item."""
+        if self.current_item and self.current_item.id == item.id:
+            return
         self.current_item = item
         
         # Update breadcrumb
-        path = self._find_path(item)
-        self.query_one("#breadcrumb", Breadcrumb).set_path(path)
+        self.query_one("#breadcrumb", Breadcrumb).set_path(
+            self.menu_paths_by_id.get(item.id, [item])
+        )
         
         # Update footer
         self.query_one("#content-footer", Static).update(
@@ -1030,22 +1188,11 @@ class SidebarAppScreen(Screen):
         
         # Render content
         renderer = self.query_one("#content-renderer", ContentRenderer)
-        renderer.render_content(item)
+        renderer.show_menu_item(item)
     
     def _find_path(self, target: MenuItem) -> list[MenuItem]:
         """Find path from root to target item."""
-        def search(node: MenuItem, path: list[MenuItem]) -> Optional[list[MenuItem]]:
-            current = path + [node]
-            if node.id == target.id:
-                return current
-            for child in node.children:
-                result = search(child, current)
-                if result:
-                    return result
-            return None
-        
-        result = search(self.menu_root, [])
-        return result[1:] if result else []  # Exclude root
+        return self.menu_paths_by_id.get(target.id, [target])
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button clicks."""
@@ -1102,6 +1249,5 @@ class SidebarTreeApp(App):
 
 
 if __name__ == "__main__":
-    import random
     app = SidebarTreeApp()
     app.run()

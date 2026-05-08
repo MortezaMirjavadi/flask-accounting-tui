@@ -56,7 +56,11 @@ class ForecastReport:
     monthly_metrics: dict
 
 
-def _parse_date(value: str) -> date:
+def _parse_date(value: str | date | datetime) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
     return datetime.strptime(value, "%Y-%m-%d").date()
 
 
@@ -91,7 +95,7 @@ class ForecastService:
     @staticmethod
     def forecast_balance(
         user_id: int,
-        start_date: str | None = None,
+        start_date: str | date | datetime | None = None,
         period_days: int = 45,
         months_back: int = 6,
         safety_threshold: float = 0.0,

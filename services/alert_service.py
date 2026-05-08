@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from services.calendar_service import CalendarService
 from services.forecast_service import ForecastService
@@ -21,6 +21,8 @@ class Alert:
 def _to_date_value(value) -> date:
     if isinstance(value, date):
         return value
+    if isinstance(value, datetime):
+        return value.date()
     if isinstance(value, str):
         return date.fromisoformat(value)
     raise TypeError(f"Unsupported date value type: {type(value)!r}")
@@ -75,7 +77,7 @@ class AlertService:
                         f"{days_left} day(s) from now for {event['amount']:,.0f}."
                     ),
                     severity="warning",
-                    due_date=event["due_date"],
+                    due_date=due.isoformat(),
                     amount=float(event["amount"]),
                 )
             )

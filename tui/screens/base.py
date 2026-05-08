@@ -1,12 +1,15 @@
 """Base classes with common functionality for screens."""
 
+from datetime import datetime
+
+import jdatetime
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Rule, Select, Static
+from textual.widgets import Button, DataTable, Digits, Footer, Header, Input, Label, Rule, Select, Static
 
-from tui.api import api_get, api_delete, handle_response
+from tui.api import api_get, api_delete, handle_response, format_toman
 from tui.widgets import ConfirmBox, HelpTip, MessageBox, StatusBar
 
 
@@ -29,7 +32,8 @@ class BaseListScreen(Screen):
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="wide_panel center_screen"):
             yield Label(self.title, classes="menu_header")
             yield Rule()
@@ -43,7 +47,8 @@ class BaseListScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip(self.help_text, id="help")
             yield StatusBar(self.status_text, id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     @property
     def title(self) -> str:
@@ -168,3 +173,348 @@ class BaseListScreen(Screen):
     @property
     def item_name(self) -> str:
         return "item"
+
+
+class DashboardScreen(Screen):
+    """Home dashboard showing sources and today's transactions."""
+
+    BINDINGS = [
+        Binding("r", "refresh", "Refresh"),
+        Binding("a", "add_source", "Add Source"),
+        Binding("t", "add_transaction", "Add Transaction"),
+    ]
+
+    CSS = """
+    DashboardScreen {
+        layout: vertical;
+        align: left top;
+        content-align: left top;
+    }
+
+    #dash-header {
+        height: 1;
+        width: 100%;
+        text-align: center;
+        color: $primary-lighten-2;
+        text-style: bold;
+        margin: 0 0 1 0;
+    }
+
+    #dash-split {
+        width: 100%;
+        height: 1fr;
+    }
+
+    #dash-left {
+        width: 45%;
+        height: 1fr;
+        border: solid $primary-darken-2;
+        padding: 0 1;
+        min-width: 0;
+    }
+
+    #dash-right {
+        width: 55%;
+        height: 1fr;
+        border: solid $primary-darken-2;
+        padding: 0 1;
+        min-width: 0;
+    }
+
+    .dash-section-title {
+        width: 1fr;
+        height: 3;
+        text-style: bold;
+        color: $primary;
+        content-align: left middle;
+        padding: 0 0 0 1;
+    }
+
+    #sources-table {
+        width: 100%;
+        height: 1fr;
+        min-height: 5;
+    }
+
+    #tx-table {
+        width: 100%;
+        height: 1fr;
+        min-height: 5;
+    }
+
+    #balance-container {
+        height: auto;
+        width: 100%;
+        margin: 0;
+        padding: 0 1;
+        background: $surface-darken-1;
+        border: solid $primary-darken-2;
+        align: center middle;
+    }
+
+    #balance-label {
+        width: 100%;
+        height: auto;
+        text-align: center;
+        color: $text-muted;
+        text-style: bold;
+        margin: 0;
+    }
+
+    #balance-digits {
+        width: auto;
+        height: auto;
+        text-align: center;
+        color: $success;
+        text-style: bold;
+        margin: 0;
+    }
+
+    #balance-unit {
+        width: 100%;
+        height: auto;
+        text-align: center;
+        color: $text-muted;
+        margin: 0;
+    }
+
+    #sources-count {
+        width: 100%;
+        height: auto;
+        text-align: center;
+        color: $text;
+        margin: 0;
+    }
+
+    #tx-summary-row {
+        height: auto;
+        width: 100%;
+        margin: 0;
+        padding: 0 1;
+        background: $surface-darken-1;
+        border: solid $primary-darken-2;
+    }
+
+    .tx-metric {
+        width: 1fr;
+        height: auto;
+        align: center middle;
+    }
+
+    .tx-metric-label {
+        width: 100%;
+        height: auto;
+        text-align: center;
+        color: $text-muted;
+        text-style: bold;
+        margin: 0;
+    }
+
+    .tx-metric-digits {
+        width: auto;
+        height: auto;
+        text-align: center;
+        margin: 0;
+    }
+
+    .income-color {
+        color: $success;
+    }
+
+    .cost-color {
+        color: $error;
+    }
+
+    .net-color {
+        color: $primary;
+    }
+
+    .tx-metric-unit {
+        width: 100%;
+        height: auto;
+        text-align: center;
+        color: $text-muted;
+        margin: 0;
+    }
+
+    #tx-count {
+        width: 100%;
+        height: auto;
+        text-align: center;
+        color: $text;
+        margin: 0;
+    }
+
+    .dash-btn-row {
+        height: 3;
+        width: 100%;
+        margin: 0;
+        align: left middle;
+    }
+
+    .dash-btn-row Button {
+        width: auto;
+        margin: 0 1 0 0;
+        min-width: 18;
+    }
+
+    #dash-bottom {
+        height: 1;
+        width: 100%;
+        color: $text-muted;
+        margin: 1 0 0 0;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Label("Personal Finance Dashboard", id="dash-header")
+        with Horizontal(id="dash-split"):
+            # Left panel — Sources
+            with Vertical(id="dash-left"):
+                with Horizontal(classes="dash-btn-row"):
+                    yield Label("Sources", classes="dash-section-title")
+                    yield Button("Add Source", variant="error", id="btn-add-source")
+                with Vertical(id="balance-container"):
+                    yield Label("Total Balance", id="balance-label")
+                    yield Digits("0", id="balance-digits")
+                    yield Static("Toman", id="balance-unit")
+                    yield Static("Loading...", id="sources-count")
+                yield DataTable(id="sources-table")
+
+            # Right panel — Today's Transactions
+            with Vertical(id="dash-right"):
+                with Horizontal(classes="dash-btn-row"):
+                    yield Label("Today's Transactions", classes="dash-section-title")
+                    yield Button("Add Transaction", variant="error", id="btn-add-tx")
+                with Horizontal(id="tx-summary-row"):
+                    with Vertical(classes="tx-metric"):
+                        yield Label("Income", classes="tx-metric-label")
+                        yield Digits("0", id="tx-income", classes="tx-metric-digits income-color")
+                        yield Static("Toman", classes="tx-metric-unit")
+                    with Vertical(classes="tx-metric"):
+                        yield Label("Cost", classes="tx-metric-label")
+                        yield Digits("0", id="tx-cost", classes="tx-metric-digits cost-color")
+                        yield Static("Toman", classes="tx-metric-unit")
+                    with Vertical(classes="tx-metric"):
+                        yield Label("Net", classes="tx-metric-label")
+                        yield Digits("0", id="tx-net", classes="tx-metric-digits net-color")
+                        yield Static("Toman", classes="tx-metric-unit")
+                yield Static("Loading...", id="tx-count")
+                yield DataTable(id="tx-table")
+        yield Static("", id="dash-bottom")
+
+    def on_mount(self) -> None:
+        src_table = self.query_one("#sources-table", DataTable)
+        src_table.add_columns("ID", "Name", "Amount")
+        src_table.cursor_type = "row"
+        src_table.zebra_stripes = True
+
+        tx_table = self.query_one("#tx-table", DataTable)
+        tx_table.add_columns("Date", "Description", "Amount")
+        tx_table.cursor_type = "row"
+        tx_table.zebra_stripes = True
+
+        self.load_sources()
+        self.load_today_transactions()
+
+    def load_sources(self):
+        src_table = self.query_one("#sources-table", DataTable)
+        src_table.clear()
+        digits = self.query_one("#balance-digits", Digits)
+        count_label = self.query_one("#sources-count", Static)
+
+        resp = api_get("/sources", username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+
+        if err:
+            digits.update("0")
+            count_label.update(f"[red]Error: {err}[/red]")
+            return
+
+        self._sources = data or []
+        if not self._sources:
+            digits.update("0")
+            count_label.update("[dim]No sources found[/dim]")
+            return
+
+        total = sum(float(s.get("amount", 0)) for s in self._sources)
+        rows = [
+            (str(s["id"]), s["name"], format_toman(s.get("amount", 0)))
+            for s in self._sources
+        ]
+        src_table.add_rows(rows)
+        digits.update(f"{total:,.0f}")
+        count_label.update(f"[b]Sources:[/b]  {len(self._sources)}")
+
+    def load_today_transactions(self):
+        tx_table = self.query_one("#tx-table", DataTable)
+        tx_table.clear()
+        income_digits = self.query_one("#tx-income", Digits)
+        cost_digits = self.query_one("#tx-cost", Digits)
+        net_digits = self.query_one("#tx-net", Digits)
+        count_label = self.query_one("#tx-count", Static)
+
+        now = datetime.now()
+        jalali_now = jdatetime.datetime.fromgregorian(datetime=now)
+        today_str = jalali_now.strftime("%Y-%m-%d")
+
+        resp = api_get(
+            "/transactions",
+            params={"date_from": today_str, "date_to": today_str, "include_transfers": 1},
+            username=self.app.user.get("username"),
+        )
+        data, err = handle_response(resp)
+
+        if err:
+            income_digits.update("0")
+            cost_digits.update("0")
+            net_digits.update("0")
+            count_label.update(f"[red]Error: {err}[/red]")
+            return
+
+        self._today_txs = data or []
+        if not self._today_txs:
+            income_digits.update("0")
+            cost_digits.update("0")
+            net_digits.update("0")
+            count_label.update(f"[dim]No transactions today ({today_str})[/dim]")
+            return
+
+        total_income = 0.0
+        total_cost = 0.0
+        rows = []
+        for t in self._today_txs:
+            amount = float(t.get("amount", 0))
+            cat_type = t.get("category_type", "")
+            if cat_type == "income" or t.get("is_transfer"):
+                total_income += amount
+            else:
+                total_cost += amount
+
+            desc = t.get("description") or t.get("category_name") or "-"
+            rows.append((t.get("date", ""), desc[:30], format_toman(amount)))
+
+        tx_table.add_rows(rows)
+        net = total_income - total_cost
+        income_digits.update(f"{total_income:,.0f}")
+        cost_digits.update(f"{total_cost:,.0f}")
+        net_digits.update(f"{net:,.0f}")
+        count_label.update(f"[dim]{len(self._today_txs)} transactions today[/dim]")
+
+    def action_refresh(self):
+        self.load_sources()
+        self.load_today_transactions()
+
+    def action_add_source(self):
+        from tui.screens.sources import SourceAddScreen
+        self.app.push_screen(SourceAddScreen())
+
+    def action_add_transaction(self):
+        from tui.screens.transactions import TransactionAddScreen
+        self.app.push_screen(TransactionAddScreen())
+
+    def on_button_pressed(self, event: Button.Pressed):
+        if event.button.id == "btn-add-source":
+            self.action_add_source()
+        elif event.button.id == "btn-add-tx":
+            self.action_add_transaction()

@@ -28,7 +28,8 @@ class TransactionsScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="main_panel center_screen"):
             yield Label("TRANSACTIONS", classes="menu_header")
             yield Rule()
@@ -42,7 +43,8 @@ class TransactionsScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-3] Quick select  [Esc] Back", id="help")
             yield StatusBar("Enter=Select  Esc=Back", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         idx = event.list_view.index
@@ -80,7 +82,8 @@ class TransactionListScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="wide_panel center_screen"):
             yield Label("TRANSACTION LIST", classes="menu_header")
             yield Rule()
@@ -112,9 +115,15 @@ class TransactionListScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [E] Edit  [D] Delete  [F] Filter  [R] Reset  [Esc] Back", id="help")
             yield StatusBar("E=Edit  D=Delete  F=Filter  R=Reset  Esc=Back", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self) -> None:
+        # Performance optimization: throttle detail updates
+        self._selected_id = None
+        self._last_update_time = 0
+        self._update_throttle_ms = 50  # Only update every 50ms
+        
         table = self.query_one("#tx_table", DataTable)
         table.add_columns("ID", "Date", "Amount", "Category", "Source", "Description")
         table.cursor_type = "row"
@@ -132,11 +141,13 @@ class TransactionListScreen(Screen):
             self.app.push_screen(MessageBox(err, "Error"))
             return
         self._data = data or []
+        self._selected_id = None  # Reset selection cache
         if not self._data:
             table.add_row("-", "-", "-", "No transactions", "-", "-")
         else:
-            for t in self._data:
-                table.add_row(
+            # Batch update for better performance
+            rows = [
+                (
                     str(t["id"]),
                     t.get("date", ""),
                     format_toman(t.get("amount", 0)),
@@ -144,6 +155,9 @@ class TransactionListScreen(Screen):
                     t.get("source_name") or "-",
                     (t.get("description") or "")[:25],
                 )
+                for t in self._data
+            ]
+            table.add_rows(rows)
         self.update_detail()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -190,11 +204,28 @@ class TransactionListScreen(Screen):
         self.load_data()
 
     def on_data_table_row_highlighted(self, event):
+        """Throttled row highlight handler for better performance."""
+        from time import time
+        now = time() * 1000  # Convert to ms
+        
+        # Throttle updates to every 50ms to improve performance
+        if now - self._last_update_time < self._update_throttle_ms:
+            return
+        
+        self._last_update_time = now
         self.update_detail()
 
     def update_detail(self):
-        detail = self.query_one("#tx_detail", Static)
+        """Optimized detail update with caching."""
         tx_id = self._get_selected_id()
+        
+        # Early return if same ID (avoid redundant updates)
+        if tx_id == getattr(self, '_selected_id', None):
+            return
+        
+        self._selected_id = tx_id
+        detail = self.query_one("#tx_detail", Static)
+        
         if tx_id is None:
             detail.update("Select a transaction to see details.")
             return
@@ -289,7 +320,8 @@ class TransactionByCategoryScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="wide_panel center_screen"):
             yield Label("TRANSACTIONS BY CATEGORY", classes="menu_header")
             yield Rule()
@@ -297,7 +329,8 @@ class TransactionByCategoryScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [Enter] Expand/Collapse  [E] Edit  [D] Delete  [Esc] Back", id="help")
             yield StatusBar("Enter=Toggle  E=Edit  D=Delete  Esc=Back", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self) -> None:
         self._categories = []
@@ -512,7 +545,8 @@ class TransactionAddScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="form_panel center_screen"):
             yield Label("ADD TRANSACTION", classes="menu_header")
             yield Rule()
@@ -542,7 +576,8 @@ class TransactionAddScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Ctrl+D] Date picker  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Ctrl+D=Date Picker  Enter=Save  Esc=Cancel", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self) -> None:
         # Set current Jalali date as default
@@ -740,7 +775,8 @@ class TransactionEditScreen(Screen):
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Header()
         with Container(classes="form_panel center_screen"):
             yield Label("EDIT TRANSACTION", classes="menu_header")
             yield Rule()
@@ -770,7 +806,8 @@ class TransactionEditScreen(Screen):
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Ctrl+D] Date picker  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Ctrl+D=Date Picker  Enter=Save  Esc=Cancel", id="status")
-        yield Footer()
+        if not getattr(self, "_sidebar_embedded", False):
+            yield Footer()
 
     def on_mount(self) -> None:
         # Set current Jalali date as default
