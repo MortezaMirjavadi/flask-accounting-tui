@@ -63,6 +63,8 @@ htmlcov/
 # Environment variables
 .env
 .env.local
+.env.staging
+.env.production
 
 # Claude/AI tools
 .claude/

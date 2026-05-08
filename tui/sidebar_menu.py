@@ -896,7 +896,7 @@ class SidebarMainMenuScreen(Screen):
         yield Header(show_clock=True)
 
         with Vertical(id="sidebar"):
-            yield Static("⚡ Personal Accounting", id="sidebar-header")
+            # yield Static("⚡ Personal Accounting", id="sidebar-header")
             with Container(id="search-container"):
                 yield Input(placeholder="Search menu...", id="search-input")
             yield SearchTree(self.menu_root, id="menu-tree")

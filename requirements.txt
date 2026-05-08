@@ -2,6 +2,7 @@
 Flask>=2.0.0
 Werkzeug>=2.0.0
 psycopg2-binary>=2.9.0
+python-dotenv>=1.0.0
 
 # TUI dependencies
 textual>=0.41.0
@@ -17,3 +18,4 @@ pytest>=7.0.0
 pytest-cov>=4.0.0
 black>=22.0.0
 flake8>=5.0.0
+pyinstaller>=6.0.0

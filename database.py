@@ -14,7 +14,7 @@ def get_database_url():
     Priority:
     1. DATABASE_URL environment variable (full connection string)
     2. Individual components (DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD)
-    3. Default: postgresql://localhost:5432/terminal_accounting
+    3. Default: postgresql://localhost:5432/terminal_accounting_staging
     """
     # Check for full connection string first
     db_url = os.environ.get("DATABASE_URL")
@@ -24,7 +24,7 @@ def get_database_url():
     # Build from individual components
     host = os.environ.get("DB_HOST", "localhost")
     port = os.environ.get("DB_PORT", "5432")
-    database = os.environ.get("DB_NAME", "terminal_accounting")
+    database = os.environ.get("DB_NAME", "terminal_accounting_staging")
     user = os.environ.get("DB_USER", "postgres")
     password = os.environ.get("DB_PASSWORD", "")
     
