@@ -32,11 +32,12 @@ class AccountingApp(App):
     ModalScreen {
         align: center middle;
         content-align: center middle;
+        background: rgba(0, 0, 0, 0.6);
     }
 
     .center_screen.form_panel {
         width: 72;
-        height: 2fr;
+        height: 1fr;
         max-height: 100%;
         border: solid $primary;
         padding: 1 2;
@@ -62,7 +63,7 @@ class AccountingApp(App):
     .form_panel {
         width: 72;
         height: 1fr;
-        max-height: 85%;
+        max-height: 100%;
         border: solid $primary;
         padding: 1 2;
         background: $surface;
@@ -161,7 +162,7 @@ class AccountingApp(App):
 
     TextArea {
         width: 100%;
-        height: 5;
+        height: 3;
         margin: 0 0 1 0;
     }
 
@@ -200,6 +201,17 @@ class AccountingApp(App):
     .form_col {
         width: 1fr;
         height: auto;
+        min-width: 0;
+    }
+
+    .wide_col {
+        width: 1.4fr;
+        height: auto;
+    }
+
+    .date_col {
+        width: 26;
+        height: auto;
     }
 
     .form_col_spacer {
@@ -212,7 +224,7 @@ class AccountingApp(App):
     }
 
     .date_field_row Input {
-        width: 1fr;
+        width: 85%;
     }
 
     .date_picker_btn {
@@ -309,6 +321,15 @@ class AccountingApp(App):
         align: center middle;
     }
 
+    .items_dialog {
+        width: 100;
+        height: auto;
+        max-height: 90%;
+        border: solid $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+
     JalaliDatePicker {
         width: 100%;
         height: auto;
@@ -366,6 +387,76 @@ class AccountingApp(App):
         width: 8;
         margin: 0 1;
     }
+
+    .section_header {
+        color: $primary;
+        text-style: bold;
+        margin: 1 0 0 0;
+    }
+
+    .items_input_row {
+        width: 100%;
+        height: auto;
+        align: left middle;
+    }
+
+    .items_input_row Input {
+        margin: 0 1 0 0;
+    }
+
+    #item_name {
+        width: 1fr;
+    }
+
+    #item_qty {
+        width: 10;
+    }
+
+    #item_unit {
+        width: 12;
+    }
+
+    #item_price {
+        width: 16;
+    }
+
+    .items_input_row #add_item_btn {
+        min-width: 14;
+        width: 14;
+        margin: 0;
+    }
+
+    #item_search {
+        width: 100%;
+        margin: 0 0 1 0;
+    }
+
+    .items_input_row Button {
+        min-width: 6;
+        margin: 0;
+    }
+
+    #items_table {
+        height: auto;
+        max-height: 12;
+        margin: 0;
+    }
+
+    .items_action_row {
+        width: 100%;
+        height: auto;
+        align: left middle;
+    }
+
+    .items_action_row Button {
+        margin: 0 1 0 0;
+    }
+
+    .items_action_row Static {
+        width: 1fr;
+        content-align: right middle;
+        color: $text-muted;
+    }
     """
 
     def __init__(self, **kwargs):
@@ -378,13 +469,13 @@ class AccountingApp(App):
         self.push_screen(LoginScreen())
 
     def push_screen(self, screen, callback=None, wait_for_dismiss=False, *, mode=None):
-        from tui.widgets.shared import MessageBox, ConfirmBox
+        from tui.widgets.shared import MessageBox, ConfirmBox, TransactionItemsModal
         from tui.sidebar_menu import ContentRenderer
 
         host_screen = getattr(self, "_sidebar_host_screen", None)
         if host_screen is not None:
-            # MessageBox & ConfirmBox — show as real modal dialogs
-            if isinstance(screen, (MessageBox, ConfirmBox)):
+            # MessageBox, ConfirmBox, TransactionItemsModal — show as real modal dialogs
+            if isinstance(screen, (MessageBox, ConfirmBox, TransactionItemsModal)):
                 return super().push_screen(
                     screen,
                     callback=callback,

@@ -174,6 +174,23 @@ def init_db():
             )
         """)
 
+        # Transaction items (line items)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS transaction_items (
+                id SERIAL PRIMARY KEY,
+                transaction_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+                name VARCHAR(255) NOT NULL,
+                quantity NUMERIC(10, 2) NOT NULL DEFAULT 1 CHECK (quantity > 0),
+                unit VARCHAR(50),
+                unit_price NUMERIC(15, 2),
+                total_price NUMERIC(15, 2) NOT NULL CHECK (total_price >= 0),
+                notes TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transaction_items_transaction ON transaction_items(transaction_id)")
+
         # Installment plans and individual installment records
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS installment_plans (
@@ -329,6 +346,7 @@ def init_db():
             "categories",
             "sources",
             "transactions",
+            "transaction_items",
             "installment_plans",
             "installments",
             "checks",
@@ -345,6 +363,7 @@ def init_db():
             "categories",
             "sources",
             "transactions",
+            "transaction_items",
             "installment_plans",
             "installments",
             "checks",
@@ -362,6 +381,7 @@ def init_db():
             "categories",
             "sources",
             "transactions",
+            "transaction_items",
             "installment_plans",
             "installments",
             "checks",
@@ -388,6 +408,7 @@ def init_db():
             "categories",
             "sources",
             "transactions",
+            "transaction_items",
             "transfers",
             "budget_periods",
             "budget_items",

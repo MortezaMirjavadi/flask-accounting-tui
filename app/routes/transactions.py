@@ -6,7 +6,8 @@ from app.utils.helpers import (
     gregorian_to_jalali,
     jalali_to_gregorian,
 )
-from app.models import validate_transaction_payload
+from app.models import validate_transaction_payload, validate_transaction_items_payload
+from app.services.transaction_item_service import TransactionItemService
 from database import get_connection, release_connection
 
 bp = Blueprint('transactions', __name__)
@@ -432,6 +433,23 @@ def create_transaction():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
+    # Validate items if provided
+    raw_items = data.get("items")
+    items = None
+    if raw_items is not None:
+        try:
+            items = validate_transaction_items_payload(raw_items)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        if items:
+            items_sum = sum(i["total_price"] for i in items)
+            if abs(items_sum - payload["amount"]) > 0.01:
+                return jsonify({
+                    "error": "Sum of item prices does not match transaction amount",
+                    "items_sum": items_sum,
+                    "transaction_amount": payload["amount"],
+                }), 400
+
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -443,33 +461,50 @@ def create_transaction():
         return err_response, status_code
 
     source_id = payload.get("source_id")
-    cursor.execute(
-        """
-        INSERT INTO transactions (user_id, date, amount, category_id, source_id, description)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        RETURNING id
-        """,
-        (
-            user_id,
-            payload["date"],
-            payload["amount"],
-            payload["category_id"],
-            source_id,
-            payload["description"],
-        ),
-    )
-    new_row = cursor.fetchone()
-    if new_row is None:
+    try:
+        cursor.execute(
+            """
+            INSERT INTO transactions (user_id, date, amount, category_id, source_id, description)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                user_id,
+                payload["date"],
+                payload["amount"],
+                payload["category_id"],
+                source_id,
+                payload["description"],
+            ),
+        )
+        new_row = cursor.fetchone()
+        if new_row is None:
+            conn.rollback()
+            cursor.close()
+            release_connection(conn)
+            return jsonify({"error": "Insert did not return id"}), 500
+        new_id = new_row['id']
+
+        # Insert items if provided
+        inserted_items = []
+        if items:
+            inserted_items = TransactionItemService.create_items(cursor, new_id, items)
+
+        _adjust_source_amount(cursor, source_id, user_id, payload["amount"], cat_type)
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
         cursor.close()
         release_connection(conn)
-        raise RuntimeError("Insert did not return id")
-    new_id = new_row['id']
-    _adjust_source_amount(cursor, source_id, user_id, payload["amount"], cat_type)
-    conn.commit()
+        return jsonify({"error": str(exc)}), 400
+
     cursor.close()
     release_connection(conn)
 
-    return jsonify(_serialize_transaction(payload, new_id)), 201
+    result = _serialize_transaction(payload, new_id)
+    if inserted_items:
+        result["items"] = inserted_items
+    return jsonify(result), 201
 
 
 @bp.route("/<int:tx_id>", methods=["GET"])
@@ -488,9 +523,9 @@ def get_transaction(tx_id):
     if row is None:
         row = _get_transfer_row(cursor, tx_id, user_id)
         record_type = "transfer"
-    cursor.close()
-    release_connection(conn)
     if row is None:
+        cursor.close()
+        release_connection(conn)
         return jsonify({"error": "Transaction not found"}), 404
     d = row_to_dict(row)
     d["date"] = gregorian_to_jalali(d["date"])
@@ -499,6 +534,13 @@ def get_transaction(tx_id):
         d["description"] = d.get("notes")
     else:
         d["is_transfer"] = False
+        # Include items for regular transactions
+        items = TransactionItemService.get_items_by_transaction(cursor, tx_id, user_id)
+        if items:
+            d["items"] = items
+            d["item_count"] = len(items)
+    cursor.close()
+    release_connection(conn)
     return jsonify(d)
 
 
@@ -658,6 +700,27 @@ def update_transaction(tx_id):
         release_connection(conn)
         return jsonify({"error": str(exc)}), 400
 
+    # Validate items if provided
+    raw_items = data.get("items")
+    items = None
+    if raw_items is not None:
+        try:
+            items = validate_transaction_items_payload(raw_items)
+        except ValueError as exc:
+            cursor.close()
+            release_connection(conn)
+            return jsonify({"error": str(exc)}), 400
+        if items:
+            items_sum = sum(i["total_price"] for i in items)
+            if abs(items_sum - payload["amount"]) > 0.01:
+                cursor.close()
+                release_connection(conn)
+                return jsonify({
+                    "error": "Sum of item prices does not match transaction amount",
+                    "items_sum": items_sum,
+                    "transaction_amount": payload["amount"],
+                }), 400
+
     err_response, new_type = _validate_transaction_business_rules(
         cursor, user_id, payload, old_transaction=old_transaction
     )
@@ -667,28 +730,45 @@ def update_transaction(tx_id):
         release_connection(conn)
         return err_response, status_code
 
-    _reverse_transaction_effect(cursor, old_transaction, user_id)
-    cursor.execute(
-        """
-        UPDATE transactions
-        SET date = %s, amount = %s, category_id = %s, source_id = %s, description = %s
-        WHERE id = %s AND user_id = %s
-        """,
-        (
-            payload["date"],
-            payload["amount"],
-            payload["category_id"],
-            payload.get("source_id"),
-            payload["description"],
-            tx_id,
-            user_id,
-        ),
-    )
-    _adjust_source_amount(cursor, payload.get("source_id"), user_id, payload["amount"], new_type)
-    conn.commit()
+    try:
+        _reverse_transaction_effect(cursor, old_transaction, user_id)
+        cursor.execute(
+            """
+            UPDATE transactions
+            SET date = %s, amount = %s, category_id = %s, source_id = %s, description = %s
+            WHERE id = %s AND user_id = %s
+            """,
+            (
+                payload["date"],
+                payload["amount"],
+                payload["category_id"],
+                payload.get("source_id"),
+                payload["description"],
+                tx_id,
+                user_id,
+            ),
+        )
+        # Replace items if provided
+        inserted_items = []
+        if items is not None:
+            TransactionItemService.soft_delete_items_by_transaction(cursor, tx_id)
+            if items:
+                inserted_items = TransactionItemService.create_items(cursor, tx_id, items)
+        _adjust_source_amount(cursor, payload.get("source_id"), user_id, payload["amount"], new_type)
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        cursor.close()
+        release_connection(conn)
+        return jsonify({"error": str(exc)}), 400
+
     cursor.close()
     release_connection(conn)
-    return jsonify(_serialize_transaction(payload, tx_id))
+
+    result = _serialize_transaction(payload, tx_id)
+    if items is not None:
+        result["items"] = inserted_items
+    return jsonify(result)
 
 
 @bp.route("/<int:tx_id>", methods=["DELETE"])
@@ -726,3 +806,181 @@ def delete_transaction(tx_id):
     cursor.close()
     release_connection(conn)
     return jsonify({"message": "Transaction archived"})
+
+
+# ── Item CRUD endpoints ────────────────────────────────────────────────
+
+
+def _get_transaction_for_items(cursor, tx_id, user_id):
+    """Fetch transaction row and verify ownership. Returns (row, error_response)."""
+    cursor.execute(
+        "SELECT * FROM transactions WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
+        (tx_id, user_id),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None, (jsonify({"error": "Transaction not found"}), 404)
+    return row, None
+
+
+@bp.route("/<int:tx_id>/items", methods=["GET"])
+def list_transaction_items(tx_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    conn = get_connection()
+    cursor = conn.cursor()
+    tx_row, err_resp = _get_transaction_for_items(cursor, tx_id, user_id)
+    if err_resp:
+        cursor.close()
+        release_connection(conn)
+        return err_resp
+    items = TransactionItemService.get_items_by_transaction(cursor, tx_id, user_id)
+    cursor.close()
+    release_connection(conn)
+    return jsonify(items)
+
+
+@bp.route("/<int:tx_id>/items", methods=["POST"])
+def add_transaction_item(tx_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        item_data = validate_transaction_items_payload([data])[0]
+    except (ValueError, IndexError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    tx_row, err_resp = _get_transaction_for_items(cursor, tx_id, user_id)
+    if err_resp:
+        cursor.close()
+        release_connection(conn)
+        return err_resp
+
+    try:
+        inserted = TransactionItemService.create_item(cursor, tx_id, item_data)
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        cursor.close()
+        release_connection(conn)
+        return jsonify({"error": str(exc)}), 400
+
+    cursor.close()
+    release_connection(conn)
+    return jsonify(inserted), 201
+
+
+@bp.route("/<int:tx_id>/items/<int:item_id>", methods=["PUT"])
+def update_transaction_item(tx_id, item_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        item_data = validate_transaction_items_payload([data])[0]
+    except (ValueError, IndexError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    tx_row, err_resp = _get_transaction_for_items(cursor, tx_id, user_id)
+    if err_resp:
+        cursor.close()
+        release_connection(conn)
+        return err_resp
+
+    existing = TransactionItemService.get_item(cursor, item_id, user_id)
+    if existing is None or existing["transaction_id"] != tx_id:
+        cursor.close()
+        release_connection(conn)
+        return jsonify({"error": "Item not found"}), 404
+
+    cursor.close()
+    release_connection(conn)
+
+    try:
+        updated = TransactionItemService.update_item(item_id, user_id, item_data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(updated)
+
+
+@bp.route("/<int:tx_id>/items/<int:item_id>", methods=["DELETE"])
+def delete_transaction_item(tx_id, item_id):
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    tx_row, err_resp = _get_transaction_for_items(cursor, tx_id, user_id)
+    if err_resp:
+        cursor.close()
+        release_connection(conn)
+        return err_resp
+
+    existing = TransactionItemService.get_item(cursor, item_id, user_id)
+    if existing is None or existing["transaction_id"] != tx_id:
+        cursor.close()
+        release_connection(conn)
+        return jsonify({"error": "Item not found"}), 404
+
+    cursor.close()
+    release_connection(conn)
+
+    try:
+        TransactionItemService.delete_item(item_id, user_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify({"message": "Item archived"})
+
+
+# ── Item reporting endpoints ───────────────────────────────────────────
+
+
+@bp.route("/items/most-purchased", methods=["GET"])
+def most_purchased_items():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    limit = request.args.get("limit", 10, type=int)
+    results = TransactionItemService.get_most_purchased(user_id, limit=limit)
+    return jsonify(results)
+
+
+@bp.route("/items/search", methods=["GET"])
+def search_items():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    q = request.args.get("q", "").strip()
+    if not q:
+        return jsonify({"error": "Search query 'q' is required"}), 400
+    results = TransactionItemService.search_items(user_id, q)
+    return jsonify(results)
+
+
+@bp.route("/items/stats", methods=["GET"])
+def item_stats():
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    name = request.args.get("name", "").strip()
+    if not name:
+        return jsonify({"error": "Item name 'name' is required"}), 400
+    stats = TransactionItemService.get_item_stats(user_id, name)
+    if stats is None:
+        return jsonify({"error": "No items found with that name"}), 404
+    return jsonify(stats)
