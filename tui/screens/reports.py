@@ -19,6 +19,7 @@ class ReportsScreen(Screen):
     BINDINGS = [
         Binding("escape", "go_back", "Back"),
         Binding("1", "do_advanced", "Dashboard"),
+        Binding("2", "do_items", "Item Analytics"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -29,11 +30,12 @@ class ReportsScreen(Screen):
             yield Static("-" * 50, classes="separator")
             yield ListView(
                 ListItem(Label("1. Daily / Weekly / Monthly Dashboard")),
-                ListItem(Label("2. Back to Main Menu")),
+                ListItem(Label("2. Item Analytics & Inflation")),
+                ListItem(Label("3. Back to Main Menu")),
                 id="rep_menu_list",
             )
         with Vertical(classes="bottom_bar"):
-            yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1] Dashboard  [Esc] Back", id="help")
+            yield HelpTip("[↑/↓] Navigate  [Enter] Select  [1-2] Quick select  [Esc] Back", id="help")
             yield StatusBar("Enter=Select  Esc=Back", id="status")
         if not getattr(self, "_sidebar_embedded", False):
             yield Footer()
@@ -41,11 +43,17 @@ class ReportsScreen(Screen):
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.list_view.index == 0:
             self.action_do_advanced()
+        elif event.list_view.index == 1:
+            self.action_do_items()
         else:
             self.action_go_back()
 
     def action_do_advanced(self):
         self.app.push_screen(AdvancedReportScreen())
+
+    def action_do_items(self):
+        from tui.screens.item_reports import ItemReportsScreen
+        self.app.push_screen(ItemReportsScreen())
 
     def action_go_back(self):
         self.app.pop_screen()
