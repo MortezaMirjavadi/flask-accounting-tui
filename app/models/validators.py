@@ -329,3 +329,71 @@ def validate_check_payload(data):
         "category_id": category_id,
         "description": description,
     }
+
+
+def validate_transaction_item_payload(data):
+    """Validate a single transaction item payload."""
+    if data is None or not isinstance(data, dict):
+        raise ValueError("Invalid item payload")
+
+    name = (data.get("name") or "").strip()
+    if not name:
+        raise ValueError("Item name is required")
+
+    quantity = data.get("quantity")
+    if quantity is None:
+        quantity = 1
+    try:
+        quantity = float(quantity)
+        if quantity <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ValueError("Quantity must be a positive number")
+
+    unit = (data.get("unit") or "").strip() or None
+
+    total_price = data.get("total_price")
+    try:
+        total_price = float(total_price)
+        if total_price < 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ValueError("Valid non-negative total_price is required")
+
+    unit_price = data.get("unit_price")
+    if unit_price is not None:
+        try:
+            unit_price = float(unit_price)
+            if unit_price < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValueError("unit_price must be a non-negative number")
+    else:
+        unit_price = round(total_price / quantity, 2) if quantity > 0 else total_price
+
+    notes = (data.get("notes") or "").strip() or None
+
+    return {
+        "name": name,
+        "quantity": quantity,
+        "unit": unit,
+        "unit_price": unit_price,
+        "total_price": total_price,
+        "notes": notes,
+    }
+
+
+def validate_transaction_items_payload(items_data):
+    """Validate a list of transaction items."""
+    if items_data is None:
+        return []
+    if not isinstance(items_data, list):
+        raise ValueError("items must be a list")
+
+    validated = []
+    for i, item in enumerate(items_data):
+        try:
+            validated.append(validate_transaction_item_payload(item))
+        except ValueError as exc:
+            raise ValueError(f"Item {i + 1}: {exc}")
+    return validated

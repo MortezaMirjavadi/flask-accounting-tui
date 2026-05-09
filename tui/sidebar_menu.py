@@ -163,6 +163,9 @@ def create_accounting_menu() -> MenuItem:
                                  MenuItem(id="report-dashboard", label="Dashboard", icon="📊",
                                           description="Daily / Weekly / Monthly dashboard",
                                           screen_module="tui.screens.reports", screen_class="AdvancedReportScreen"),
+                                 MenuItem(id="item-reports", label="Item Analytics & Inflation", icon="🔍",
+                                          description="Item-level analytics, price trends, spending velocity, personal inflation tracker",
+                                          screen_module="tui.screens.item_reports", screen_class="ItemReportsScreen"),
                              ]),
                 ]
             ),
@@ -816,6 +819,11 @@ class SidebarMainMenuScreen(Screen):
     }
 
     #screen-container .form_scroll {
+        height: 1fr;
+        min-height: 0;
+    }
+
+    #screen-container .report_scroll {
         height: 1fr;
         min-height: 0;
     }

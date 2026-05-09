@@ -14,7 +14,7 @@ from textual.widgets import (
 
 from tui.api import api_get, api_post, api_put, api_delete, handle_response, format_toman
 from tui.jalali_date_picker import JalaliDatePicker
-from tui.widgets import ConfirmBox, HelpTip, MessageBox, StatusBar
+from tui.widgets import ConfirmBox, HelpTip, MessageBox, StatusBar, TransactionItemsModal
 
 
 class TransactionsScreen(Screen):
@@ -553,7 +553,7 @@ class TransactionAddScreen(Screen):
             with VerticalScroll(classes="form_scroll"):
                 with Horizontal(classes="form_row"):
                     with Vertical(classes="form_col"):
-                        yield Label("Date (Jalali YYYY-MM-DD):")
+                        yield Label("Date (Jalali):")
                         with Horizontal(classes="date_field_row"):
                             yield Input(placeholder="1405-01-31", id="tx_date")
                             yield Button("📅", id="btn_date_picker", classes="date_picker_btn")
@@ -572,12 +572,15 @@ class TransactionAddScreen(Screen):
                         yield Select([], prompt="Loading...", id="tx_secondary_select")
                 yield Label("Note (optional):")
                 yield TextArea(id="tx_desc")
+                yield Rule()
+                yield Label("ITEMS (optional):", classes="section_header")
+                yield Button("Items (0)", variant="default", id="open_items_btn")
             with Horizontal(classes="button_row"):
                 yield Button("Save", variant="primary", id="save")
                 yield Button("Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
-            yield HelpTip("[Tab] Next field  [📅] Date picker  [Enter] Save  [Esc] Cancel", id="help")
-            yield StatusBar("📅=Date Picker  Enter=Save  Esc=Cancel", id="status")
+            yield HelpTip("[Tab] Next field  [Ctrl+D] Date picker  [Enter] Save  [Esc] Cancel", id="help")
+            yield StatusBar("Ctrl+D=Date Picker  Enter=Save  Esc=Cancel", id="status")
         if not getattr(self, "_sidebar_embedded", False):
             yield Footer()
 
@@ -590,6 +593,7 @@ class TransactionAddScreen(Screen):
 
         self._category_options = []
         self._source_options = []
+        self._items = []
         self.load_categories()
         self.load_sources()
         self._apply_dynamic_fields(False)
@@ -660,8 +664,28 @@ class TransactionAddScreen(Screen):
                 self.query_one("#tx_amount", Input).focus()
             except Exception:
                 pass
+        elif event.button.id == "open_items_btn":
+            self.action_open_items()
         elif event.button.id == "cancel":
             self.action_go_back()
+
+    def action_open_items(self):
+        def on_items_done(items):
+            if items is not None:
+                self._items = items
+                self._update_items_button()
+
+        self.app.push_screen(
+            TransactionItemsModal(existing_items=self._items),
+            on_items_done,
+        )
+
+    def _update_items_button(self):
+        try:
+            btn = self.query_one("#open_items_btn", Button)
+            btn.label = f"Items ({len(self._items)})"
+        except Exception:
+            pass
 
     def save(self):
         date = self.query_one("#tx_date", Input).value.strip()
@@ -710,7 +734,14 @@ class TransactionAddScreen(Screen):
             payload["category_id"] = primary_value
             if secondary_value is not None and secondary_value != Select.BLANK:
                 payload["source_id"] = secondary_value
-        
+            # Include items if any
+            if self._items:
+                payload["items"] = [
+                    {"name": i["name"], "quantity": i["quantity"], "unit": i.get("unit"),
+                     "unit_price": i["unit_price"], "total_price": i["total_price"]}
+                    for i in self._items
+                ]
+
         resp = api_post("/transactions", payload, username=self.app.user.get("username"))
         _, err = handle_response(resp)
 
@@ -726,6 +757,8 @@ class TransactionAddScreen(Screen):
                 self.query_one("#tx_amount", Input).value = ""
                 self.query_one("#tx_desc", TextArea).load_text("")
                 self.query_one("#tx_is_transfer", Checkbox).value = False
+                self._items = []
+                self._update_items_button()
                 self.query_one("#tx_date", Input).focus()
 
             self.app.push_screen(MessageBox(message, "Success"), on_success_dismiss)
@@ -785,6 +818,7 @@ class TransactionEditScreen(Screen):
         self.on_save = on_save
         self._original_is_transfer = False
         self._hydrating_form = False
+        self._items = []
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
@@ -796,7 +830,7 @@ class TransactionEditScreen(Screen):
             with VerticalScroll(classes="form_scroll"):
                 with Horizontal(classes="form_row"):
                     with Vertical(classes="form_col"):
-                        yield Label("Date (Jalali YYYY-MM-DD):")
+                        yield Label("Date (Jalali):")
                         with Horizontal(classes="date_field_row"):
                             yield Input(placeholder="1405-01-31", id="tx_date")
                             yield Button("📅", id="btn_date_picker", classes="date_picker_btn")
@@ -815,12 +849,15 @@ class TransactionEditScreen(Screen):
                         yield Select([], prompt="Loading...", id="tx_secondary_select")
                 yield Label("Note (optional):")
                 yield TextArea(id="tx_desc")
+                yield Rule()
+                yield Label("ITEMS (optional):", classes="section_header")
+                yield Button("Items (0)", variant="default", id="open_items_btn")
             with Horizontal(classes="button_row"):
                 yield Button("Save", variant="primary", id="save")
                 yield Button("Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
-            yield HelpTip("[Tab] Next field  [📅] Date picker  [Enter] Save  [Esc] Cancel", id="help")
-            yield StatusBar("📅=Date Picker  Enter=Save  Esc=Cancel", id="status")
+            yield HelpTip("[Tab] Next field  [Ctrl+D] Date picker  [Enter] Save  [Esc] Cancel", id="help")
+            yield StatusBar("Ctrl+D=Date Picker  Enter=Save  Esc=Cancel", id="status")
         if not getattr(self, "_sidebar_embedded", False):
             yield Footer()
 
@@ -833,6 +870,7 @@ class TransactionEditScreen(Screen):
 
         self._category_options = []
         self._source_options = []
+        self._items = []
         self.load_categories()
         self.load_sources()
 
@@ -869,6 +907,19 @@ class TransactionEditScreen(Screen):
             if data.get("source_id") is not None:
                 secondary_select.value = data.get("source_id")
         self._hydrating_form = False
+
+        # Load existing items
+        existing_items = data.get("items") or []
+        for item in existing_items:
+            self._items.append({
+                "name": item["name"],
+                "quantity": float(item.get("quantity", 1)),
+                "unit": item.get("unit"),
+                "unit_price": float(item.get("unit_price") or 0),
+                "total_price": float(item.get("total_price", 0)),
+            })
+        if self._items:
+            self._update_items_button()
 
     def load_categories(self):
         resp = api_get("/categories", username=self.app.user.get("username"))
@@ -925,6 +976,24 @@ class TransactionEditScreen(Screen):
             primary_select.clear()
             secondary_select.clear()
 
+    def action_open_items(self):
+        def on_items_done(items):
+            if items is not None:
+                self._items = items
+                self._update_items_button()
+
+        self.app.push_screen(
+            TransactionItemsModal(existing_items=self._items),
+            on_items_done,
+        )
+
+    def _update_items_button(self):
+        try:
+            btn = self.query_one("#open_items_btn", Button)
+            btn.label = f"Items ({len(self._items)})"
+        except Exception:
+            pass
+
     def action_toggle_date_picker(self):
         scroll = self.query_one(".form_scroll", VerticalScroll)
         existing = list(scroll.query("JalaliDatePicker"))
@@ -975,6 +1044,8 @@ class TransactionEditScreen(Screen):
                 self.query_one("#tx_amount", Input).focus()
             except Exception:
                 pass
+        elif event.button.id == "open_items_btn":
+            self.action_open_items()
         elif event.button.id == "cancel":
             self.action_go_back()
 
@@ -1026,6 +1097,13 @@ class TransactionEditScreen(Screen):
             payload["category_id"] = primary_value
             if secondary_value is not None and secondary_value != Select.BLANK:
                 payload["source_id"] = secondary_value
+            # Include items if any
+            if self._items:
+                payload["items"] = [
+                    {"name": i["name"], "quantity": i["quantity"], "unit": i.get("unit"),
+                     "unit_price": i["unit_price"], "total_price": i["total_price"]}
+                    for i in self._items
+                ]
 
         resp = api_put(
             f"/transactions/{self.tx_id}?record_type={self.record_type}",
