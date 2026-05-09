@@ -572,6 +572,14 @@ class TransactionAddScreen(Screen):
                         yield Select([], prompt="Loading...", id="tx_secondary_select")
                 yield Label("Note (optional):")
                 yield TextArea(id="tx_desc")
+                with Horizontal(classes="form_row"):
+                    with Vertical(classes="form_col"):
+                        yield Label("Tag (optional):")
+                        yield Select([], prompt="None", id="tx_tag_select")
+                    yield Static("", classes="form_col_spacer")
+                    with Vertical(classes="form_col"):
+                        yield Label("Label (optional):")
+                        yield Select([], prompt="None", id="tx_label_select")
                 yield Rule()
                 yield Label("ITEMS (optional):", classes="section_header")
                 yield Button("Items (0)", variant="default", id="open_items_btn")
@@ -594,9 +602,29 @@ class TransactionAddScreen(Screen):
         self._category_options = []
         self._source_options = []
         self._items = []
+        self._available_tags = []
+        self._available_labels = []
         self.load_categories()
         self.load_sources()
         self._apply_dynamic_fields(False)
+        self._load_tag_options()
+        self._load_label_options()
+
+    def _load_tag_options(self):
+        resp = api_get("/metadata/tags", username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        if err or not data:
+            return
+        options = [(t["name"], t["id"]) for t in data]
+        self.query_one("#tx_tag_select", Select).set_options(options)
+
+    def _load_label_options(self):
+        resp = api_get("/metadata/labels", username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        if err or not data:
+            return
+        options = [(l["name"], l["id"]) for l in data]
+        self.query_one("#tx_label_select", Select).set_options(options)
 
     def load_categories(self):
         resp = api_get("/categories", username=self.app.user.get("username"))
@@ -743,11 +771,22 @@ class TransactionAddScreen(Screen):
                 ]
 
         resp = api_post("/transactions", payload, username=self.app.user.get("username"))
-        _, err = handle_response(resp)
+        resp_data, err = handle_response(resp)
 
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
         else:
+            # Set tags and labels on the new transaction
+            tx_id = resp_data.get("id") if resp_data else None
+            if tx_id and not is_transfer:
+                tag_value = self.query_one("#tx_tag_select", Select).value
+                label_value = self.query_one("#tx_label_select", Select).value
+                username = self.app.user.get("username")
+                if tag_value not in (None, Select.BLANK):
+                    api_put(f"/metadata/transactions/{tx_id}/tags", {"tag_ids": [tag_value]}, username=username)
+                if label_value not in (None, Select.BLANK):
+                    api_put(f"/metadata/transactions/{tx_id}/labels", {"label_ids": [label_value]}, username=username)
+
             message = "Transfer added successfully." if is_transfer else "Transaction added successfully."
 
             def on_success_dismiss(_):
@@ -759,6 +798,8 @@ class TransactionAddScreen(Screen):
                 self.query_one("#tx_is_transfer", Checkbox).value = False
                 self._items = []
                 self._update_items_button()
+                self.query_one("#tx_tag_select", Select).clear()
+                self.query_one("#tx_label_select", Select).clear()
                 self.query_one("#tx_date", Input).focus()
 
             self.app.push_screen(MessageBox(message, "Success"), on_success_dismiss)
@@ -819,6 +860,8 @@ class TransactionEditScreen(Screen):
         self._original_is_transfer = False
         self._hydrating_form = False
         self._items = []
+        self._available_tags = []
+        self._available_labels = []
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
@@ -849,6 +892,14 @@ class TransactionEditScreen(Screen):
                         yield Select([], prompt="Loading...", id="tx_secondary_select")
                 yield Label("Note (optional):")
                 yield TextArea(id="tx_desc")
+                with Horizontal(classes="form_row"):
+                    with Vertical(classes="form_col"):
+                        yield Label("Tag (optional):")
+                        yield Select([], prompt="None", id="tx_tag_select")
+                    yield Static("", classes="form_col_spacer")
+                    with Vertical(classes="form_col"):
+                        yield Label("Label (optional):")
+                        yield Select([], prompt="None", id="tx_label_select")
                 yield Rule()
                 yield Label("ITEMS (optional):", classes="section_header")
                 yield Button("Items (0)", variant="default", id="open_items_btn")
@@ -873,6 +924,8 @@ class TransactionEditScreen(Screen):
         self._items = []
         self.load_categories()
         self.load_sources()
+        self._load_tag_options()
+        self._load_label_options()
 
         resp = api_get(
             f"/transactions/{self.tx_id}",
@@ -946,6 +999,38 @@ class TransactionEditScreen(Screen):
         else:
             self._source_options = [(s["name"], s["id"]) for s in data]
         self._apply_dynamic_fields(self.query_one("#tx_is_transfer", Checkbox).value)
+
+    def _load_tag_options(self):
+        resp = api_get("/metadata/tags", username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        if err or not data:
+            return
+        options = [(t["name"], t["id"]) for t in data]
+        self.query_one("#tx_tag_select", Select).set_options(options)
+        # Pre-select existing tag
+        try:
+            tags_resp = api_get(f"/metadata/transactions/{self.tx_id}/tags", username=self.app.user.get("username"))
+            existing_tags, _ = handle_response(tags_resp)
+            if existing_tags and existing_tags[0]:
+                self.query_one("#tx_tag_select", Select).value = existing_tags[0]["id"]
+        except Exception:
+            pass
+
+    def _load_label_options(self):
+        resp = api_get("/metadata/labels", username=self.app.user.get("username"))
+        data, err = handle_response(resp)
+        if err or not data:
+            return
+        options = [(l["name"], l["id"]) for l in data]
+        self.query_one("#tx_label_select", Select).set_options(options)
+        # Pre-select existing label
+        try:
+            labels_resp = api_get(f"/metadata/transactions/{self.tx_id}/labels", username=self.app.user.get("username"))
+            existing_labels, _ = handle_response(labels_resp)
+            if existing_labels and existing_labels[0]:
+                self.query_one("#tx_label_select", Select).value = existing_labels[0]["id"]
+        except Exception:
+            pass
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         if event.checkbox.id == "tx_is_transfer":
@@ -1115,10 +1200,20 @@ class TransactionEditScreen(Screen):
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
         else:
+            # Set tags and labels on the transaction
+            if not is_transfer:
+                tag_value = self.query_one("#tx_tag_select", Select).value
+                label_value = self.query_one("#tx_label_select", Select).value
+                username = self.app.user.get("username")
+                if tag_value not in (None, Select.BLANK):
+                    api_put(f"/metadata/transactions/{self.tx_id}/tags", {"tag_ids": [tag_value]}, username=username)
+                if label_value not in (None, Select.BLANK):
+                    api_put(f"/metadata/transactions/{self.tx_id}/labels", {"label_ids": [label_value]}, username=username)
+
             self._original_is_transfer = bool(data.get("is_transfer", is_transfer))
             if self.on_save:
                 self.on_save()
-            self.app.pop_screen()
+            self.action_go_back()
 
     def action_go_back(self):
         self.app.pop_screen()

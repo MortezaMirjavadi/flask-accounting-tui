@@ -106,6 +106,42 @@ def create_accounting_menu() -> MenuItem:
                 ]
             ),
             MenuItem(
+                id="organization", label="Organization", icon="🏷️",
+                description="Contacts, tags, and labels",
+                children=[
+                    MenuItem(id="contacts", label="Contacts", icon="👤",
+                             description="Manage contacts",
+                             children=[
+                                 MenuItem(id="contact-list", label="List Contacts", icon="📋",
+                                          description="View all contacts",
+                                          screen_module="tui.screens.metadata", screen_class="ContactListScreen"),
+                                 MenuItem(id="contact-add", label="Add Contact", icon="➕",
+                                          description="Add a new contact",
+                                          screen_module="tui.screens.metadata", screen_class="ContactFormScreen"),
+                             ]),
+                    MenuItem(id="tags", label="Tags", icon="🔖",
+                             description="Manage tags for transactions",
+                             children=[
+                                 MenuItem(id="tag-list", label="List Tags", icon="📋",
+                                          description="View all tags",
+                                          screen_module="tui.screens.metadata", screen_class="TagListScreen"),
+                                 MenuItem(id="tag-add", label="Add Tag", icon="➕",
+                                          description="Add a new tag",
+                                          screen_module="tui.screens.metadata", screen_class="TagFormScreen"),
+                             ]),
+                    MenuItem(id="labels", label="Labels", icon="🏷️",
+                             description="Manage labels for transactions and sources",
+                             children=[
+                                 MenuItem(id="label-list", label="List Labels", icon="📋",
+                                          description="View all labels",
+                                          screen_module="tui.screens.metadata", screen_class="LabelListScreen"),
+                                 MenuItem(id="label-add", label="Add Label", icon="➕",
+                                          description="Add a new label",
+                                          screen_module="tui.screens.metadata", screen_class="LabelFormScreen"),
+                             ]),
+                ]
+            ),
+            MenuItem(
                 id="planning", label="Budget & Planning", icon="📊",
                 description="Budget management and planning",
                 children=[
@@ -151,6 +187,21 @@ def create_accounting_menu() -> MenuItem:
                                           description="Add a new installment plan",
                                           screen_module="tui.screens.installments", screen_class="InstallmentAddScreen"),
                              ]),
+                ]
+            ),
+            MenuItem(
+                id="debts_section", label="Debts & Receivables", icon="💰",
+                description="Track money owed to and by you",
+                children=[
+                    MenuItem(id="debt-dashboard", label="Dashboard", icon="📊",
+                             description="Debt overview and alerts",
+                             screen_module="tui.screens.debts", screen_class="DebtDashboardScreen"),
+                    MenuItem(id="debt-list", label="List Debts", icon="📋",
+                             description="View all debts and receivables",
+                             screen_module="tui.screens.debts", screen_class="DebtListScreen"),
+                    MenuItem(id="debt-add", label="Add Debt", icon="➕",
+                             description="Record a new debt or receivable",
+                             screen_module="tui.screens.debts", screen_class="DebtAddScreen"),
                 ]
             ),
             MenuItem(

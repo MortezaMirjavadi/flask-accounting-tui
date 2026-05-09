@@ -397,3 +397,141 @@ def validate_transaction_items_payload(items_data):
         except ValueError as exc:
             raise ValueError(f"Item {i + 1}: {exc}")
     return validated
+
+
+def validate_debt_payload(data):
+    """Validate a debt/receivable creation payload."""
+    if data is None or not isinstance(data, dict):
+        raise ValueError("Invalid payload")
+
+    debt_type = (data.get("type") or "").strip().lower()
+    if debt_type not in ("receivable", "payable"):
+        raise ValueError("type must be 'receivable' or 'payable'")
+
+    counterparty_name = (data.get("counterparty_name") or "").strip()
+    if not counterparty_name:
+        raise ValueError("counterparty_name is required")
+
+    counterparty_type = (data.get("counterparty_type") or "person").strip().lower()
+    valid_types = ("person", "company", "bank", "merchant", "family", "friend", "other")
+    if counterparty_type not in valid_types:
+        raise ValueError(f"counterparty_type must be one of: {', '.join(valid_types)}")
+
+    title = (data.get("title") or "").strip()
+    if not title:
+        raise ValueError("title is required")
+
+    description = (data.get("description") or "").strip() or None
+
+    try:
+        original_amount = float(data.get("original_amount"))
+        if original_amount <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ValueError("original_amount must be a positive number")
+
+    issue_date = (data.get("issue_date") or "").strip()
+    if not issue_date:
+        raise ValueError("issue_date is required")
+    issue_date = jalali_to_gregorian(issue_date)
+
+    due_date = (data.get("due_date") or "").strip() or None
+    if due_date:
+        due_date = jalali_to_gregorian(due_date)
+        if due_date < issue_date:
+            raise ValueError("due_date cannot be before issue_date")
+
+    priority = (data.get("priority") or "normal").strip().lower()
+    if priority not in ("low", "normal", "high", "urgent"):
+        raise ValueError("priority must be low, normal, high, or urgent")
+
+    source_id = data.get("source_id")
+    if source_id is not None:
+        try:
+            source_id = int(source_id)
+            if source_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValueError("source_id must be a positive integer")
+
+    reference_type = (data.get("reference_type") or "").strip() or None
+    reference_id = data.get("reference_id")
+    if reference_id is not None:
+        try:
+            reference_id = int(reference_id)
+        except (TypeError, ValueError):
+            raise ValueError("reference_id must be an integer")
+
+    has_interest = bool(data.get("has_interest", False))
+    interest_type = (data.get("interest_type") or "").strip() or None
+    interest_rate = data.get("interest_rate")
+
+    if has_interest:
+        if interest_type not in ("simple", "compound", "fixed"):
+            raise ValueError("interest_type must be simple, compound, or fixed")
+        try:
+            interest_rate = float(interest_rate)
+            if interest_rate < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValueError("interest_rate must be a non-negative number")
+    else:
+        interest_type = None
+        interest_rate = None
+
+    return {
+        "type": debt_type,
+        "counterparty_name": counterparty_name,
+        "counterparty_type": counterparty_type,
+        "title": title,
+        "description": description,
+        "original_amount": original_amount,
+        "issue_date": issue_date,
+        "due_date": due_date,
+        "priority": priority,
+        "source_id": source_id,
+        "reference_type": reference_type,
+        "reference_id": reference_id,
+        "has_interest": has_interest,
+        "interest_type": interest_type,
+        "interest_rate": interest_rate,
+    }
+
+
+def validate_debt_payment_payload(data):
+    """Validate a debt payment payload."""
+    if data is None or not isinstance(data, dict):
+        raise ValueError("Invalid payload")
+
+    try:
+        amount = float(data.get("amount"))
+        if amount <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ValueError("amount must be a positive number")
+
+    payment_date = (data.get("payment_date") or "").strip()
+    if not payment_date:
+        raise ValueError("payment_date is required")
+    payment_date = jalali_to_gregorian(payment_date)
+
+    payment_method = (data.get("payment_method") or "cash").strip().lower()
+
+    source_id = data.get("source_id")
+    if source_id is not None:
+        try:
+            source_id = int(source_id)
+            if source_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValueError("source_id must be a positive integer")
+
+    note = (data.get("note") or "").strip() or None
+
+    return {
+        "amount": amount,
+        "payment_date": payment_date,
+        "payment_method": payment_method,
+        "source_id": source_id,
+        "note": note,
+    }

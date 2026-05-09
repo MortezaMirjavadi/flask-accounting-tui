@@ -324,10 +324,12 @@ class AccountingApp(App):
     .items_dialog {
         width: 100;
         height: auto;
-        max-height: 90%;
+        max-height: 85%;
         border: solid $primary;
         background: $surface;
         padding: 1 2;
+        margin: 1 0;
+        overflow-y: auto;
     }
 
     JalaliDatePicker {
@@ -456,6 +458,42 @@ class AccountingApp(App):
         width: 1fr;
         content-align: right middle;
         color: $text-muted;
+    }
+
+    .tag_row {
+        height: auto;
+        width: 100%;
+        margin: 0 0 0 0;
+        padding: 0;
+    }
+
+    .tag_row Label {
+        width: auto;
+        margin: 0 1 0 0;
+        color: $text-muted;
+    }
+
+    .tag_row Checkbox {
+        width: auto;
+        margin: 0 1 0 0;
+    }
+
+    .label_row {
+        height: auto;
+        width: 100%;
+        margin: 0 0 0 0;
+        padding: 0;
+    }
+
+    .label_row Label {
+        width: auto;
+        margin: 0 1 0 0;
+        color: $text-muted;
+    }
+
+    .label_row Checkbox {
+        width: auto;
+        margin: 0 1 0 0;
     }
     """
 

@@ -10,6 +10,8 @@ from app.models.validators import (
     validate_installment_plan_payload,
     validate_installment_payment_payload,
     validate_check_payload,
+    validate_debt_payload,
+    validate_debt_payment_payload,
 )
 
 __all__ = [
@@ -24,4 +26,6 @@ __all__ = [
     'validate_installment_plan_payload',
     'validate_installment_payment_payload',
     'validate_check_payload',
+    'validate_debt_payload',
+    'validate_debt_payment_payload',
 ]
