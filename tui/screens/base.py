@@ -501,9 +501,13 @@ class DashboardScreen(Screen):
         net_digits.update(f"{net:,.0f}")
         count_label.update(f"[dim]{len(self._today_txs)} transactions today[/dim]")
 
-    def action_refresh(self):
+    def load_data(self):
+        """Refresh all dashboard data from the API."""
         self.load_sources()
         self.load_today_transactions()
+
+    def action_refresh(self):
+        self.load_data()
 
     def action_add_source(self):
         from tui.screens.sources import SourceAddScreen

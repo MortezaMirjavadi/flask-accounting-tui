@@ -1,6 +1,8 @@
 """Application configuration and constants."""
 
-BASE_URL = "http://127.0.0.1:5000"
+import os
+
+BASE_URL = os.environ.get("BASE_URL", "http://127.0.0.1:5000")
 
 # Persian month names mapping
 PERSIAN_MONTHS = [

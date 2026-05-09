@@ -206,6 +206,21 @@ class AccountingApp(App):
         width: 2;
     }
 
+    .date_field_row {
+        width: 100%;
+        height: auto;
+    }
+
+    .date_field_row Input {
+        width: 1fr;
+    }
+
+    .date_picker_btn {
+        min-width: 10;
+        width: 10;
+        margin: 0 0 0 1;
+    }
+
     .filter_row {
         width: 100%;
         height: auto;
@@ -378,7 +393,18 @@ class AccountingApp(App):
                 )
 
             # Regular screens — load inside the content area
-            renderer = host_screen.query_one(ContentRenderer)
+            try:
+                renderer = host_screen.query_one(ContentRenderer)
+            except Exception:
+                # Host screen is stale (e.g. after crash/logout), clear and fall through
+                self._sidebar_host_screen = None
+                return super().push_screen(
+                    screen,
+                    callback=callback,
+                    wait_for_dismiss=wait_for_dismiss,
+                    mode=mode,
+                )
+
             renderer.show_instance(screen, self, callback=callback)
             future = asyncio.get_running_loop().create_future()
             future.set_result(None)

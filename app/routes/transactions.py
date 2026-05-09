@@ -279,7 +279,7 @@ def list_transactions():
     cursor = conn.cursor()
     
     query = (
-        "SELECT t.*, c.name as category_name, s.name as source_name "
+        "SELECT t.*, c.name as category_name, s.name as source_name, c.type as category_type "
         "FROM transactions t "
         "LEFT JOIN categories c ON t.category_id = c.id "
         "LEFT JOIN sources s ON t.source_id = s.id "

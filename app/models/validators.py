@@ -4,15 +4,24 @@ def validate_user_payload(data):
     """Validate user registration/login payload."""
     username = data.get("username", "").strip()
     password = data.get("password", "")
-    
+
     if not username or len(username) < 3:
         raise ValueError("Username must be at least 3 characters")
     if not password or len(password) < 6:
         raise ValueError("Password must be at least 6 characters")
-    if len(password) < 4:
-        raise ValueError("Password must be at least 4 characters")
-    
-    return {"username": username, "password": password}
+
+    display_name = data.get("display_name", "").strip() or None
+    email = data.get("email", "").strip() or None
+
+    if email and "@" not in email:
+        raise ValueError("Invalid email address")
+
+    return {
+        "username": username,
+        "password": password,
+        "display_name": display_name,
+        "email": email,
+    }
 
 
 def validate_category_payload(data):
