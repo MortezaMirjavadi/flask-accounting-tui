@@ -603,8 +603,8 @@ class DebtAddScreen(Screen):
                         )
                     yield Static("", classes="form_col_spacer")
                     with Vertical(classes="form_col"):
-                        yield Label("Source Account (optional):")
-                        yield Select([], prompt="None", id="debt_source")
+                        yield Label("Wallet Account (optional):")
+                        yield Select([], prompt="None", id="debt_wallet")
                 yield Label("Title:")
                 yield Input(placeholder="Short description", id="debt_title")
                 with Horizontal(classes="form_row"):
@@ -644,18 +644,18 @@ class DebtAddScreen(Screen):
         now = datetime.now()
         jalali_now = jdatetime.datetime.fromgregorian(datetime=now)
         self.query_one("#debt_issue_date", Input).value = jalali_now.strftime("%Y-%m-%d")
-        self._source_options = []
-        self.load_sources()
+        self._wallet_options = []
+        self.load_wallets()
 
-    def load_sources(self):
-        resp = api_get("/sources", username=self.app.user.get("username"))
+    def load_wallets(self):
+        resp = api_get("/wallets", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             return
         if data:
-            self._source_options = [(s["name"], s["id"]) for s in data]
-            self.query_one("#debt_source", Select).set_options(
-                [("None", None)] + self._source_options
+            self._wallet_options = [(s["name"], s["id"]) for s in data]
+            self.query_one("#debt_wallet", Select).set_options(
+                [("None", None)] + self._wallet_options
             )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -668,7 +668,7 @@ class DebtAddScreen(Screen):
         debt_type = self.query_one("#debt_type", Select).value
         cp_name = self.query_one("#debt_cp_name", Input).value.strip()
         cp_type = self.query_one("#debt_cp_type", Select).value
-        source_id = self.query_one("#debt_source", Select).value
+        wallet_id = self.query_one("#debt_wallet", Select).value
         title = self.query_one("#debt_title", Input).value.strip()
         amount_str = self.query_one("#debt_amount", Input).value.strip()
         issue_date = self.query_one("#debt_issue_date", Input).value.strip()
@@ -710,8 +710,8 @@ class DebtAddScreen(Screen):
         }
         if due_date:
             payload["due_date"] = due_date
-        if source_id:
-            payload["source_id"] = source_id
+        if wallet_id:
+            payload["wallet_id"] = wallet_id
 
         resp = api_post("/debts", payload, username=self.app.user.get("username"))
         _, err = handle_response(resp)
@@ -761,8 +761,8 @@ class DebtPaymentScreen(Screen):
                 with Horizontal(classes="date_field_row"):
                     yield Input(placeholder="1405-02-19", id="pay_date")
                     yield Button("\U0001f4c5", id="btn_pay_date_picker", classes="date_picker_btn")
-                yield Label("Source Account (optional):")
-                yield Select([], prompt="None", id="pay_source")
+                yield Label("Wallet Account (optional):")
+                yield Select([], prompt="None", id="pay_wallet")
                 yield Label("Note (optional):")
                 yield Input(placeholder="e.g. partial payment", id="pay_note")
             with Horizontal(classes="button_row"):
@@ -780,16 +780,16 @@ class DebtPaymentScreen(Screen):
         now = datetime.now()
         jalali_now = jdatetime.datetime.fromgregorian(datetime=now)
         self.query_one("#pay_date", Input).value = jalali_now.strftime("%Y-%m-%d")
-        self.load_sources()
+        self.load_wallets()
 
-    def load_sources(self):
-        resp = api_get("/sources", username=self.app.user.get("username"))
+    def load_wallets(self):
+        resp = api_get("/wallets", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             return
         if data:
             options = [(s["name"], s["id"]) for s in data]
-            self.query_one("#pay_source", Select).set_options([("None", None)] + options)
+            self.query_one("#pay_wallet", Select).set_options([("None", None)] + options)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
@@ -800,7 +800,7 @@ class DebtPaymentScreen(Screen):
     def save(self):
         amount_str = self.query_one("#pay_amount", Input).value.strip()
         pay_date = self.query_one("#pay_date", Input).value.strip()
-        source_id = self.query_one("#pay_source", Select).value
+        wallet_id = self.query_one("#pay_wallet", Select).value
         note = self.query_one("#pay_note", Input).value.strip()
 
         if not amount_str:
@@ -822,8 +822,8 @@ class DebtPaymentScreen(Screen):
             "payment_date": pay_date,
             "payment_method": "cash",
         }
-        if source_id:
-            payload["source_id"] = source_id
+        if wallet_id:
+            payload["wallet_id"] = wallet_id
         if note:
             payload["note"] = note
 

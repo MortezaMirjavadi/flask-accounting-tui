@@ -36,7 +36,8 @@ def get_user_id_from_request():
 def jalali_to_gregorian(date_str: str) -> str:
     """Convert Jalali date (YYYY-MM-DD) to Gregorian (YYYY-MM-DD).
 
-    Valid Jalali years: 1300-1500 (covers ~1921-2071 Gregorian)
+    Valid Jalali years: 1300-1500 (covers ~1921-2071 Gregorian).
+    Also accepts Gregorian dates (year >= 1900) and returns them as-is.
     """
     if not date_str or not isinstance(date_str, str):
         raise ValueError("Date is required")
@@ -50,6 +51,10 @@ def jalali_to_gregorian(date_str: str) -> str:
         year, month, day = map(int, parts)
     except ValueError:
         raise ValueError("Date must be numeric in YYYY-MM-DD format")
+
+    # If year >= 1900, treat as Gregorian and return as-is
+    if year >= 1900:
+        return date_str
 
     # Validate year range (Jalali years 1300-1500 are reasonable)
     if year < 1300 or year > 1500:
@@ -142,3 +147,20 @@ def get_persian_month_name(month):
 def format_toman(amount):
     """Format amount in Toman."""
     return f"{amount:,.0f} تومان"
+
+
+CURRENCY_SYMBOLS = {
+    'IRR': 'تومان',
+    'USD': '$',
+    'EUR': '€',
+    'GBP': '£',
+    'AED': 'د.إ',
+}
+
+
+def format_currency(amount, currency='IRR'):
+    """Format amount with currency symbol."""
+    symbol = CURRENCY_SYMBOLS.get(currency, currency)
+    if currency == 'IRR':
+        return f"{amount:,.0f} {symbol}"
+    return f"{amount:,.2f} {symbol}"

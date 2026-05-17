@@ -1,5 +1,6 @@
 """Debt & Receivable management service."""
 
+import math
 from datetime import date, timedelta
 
 from database import get_connection, release_connection
@@ -31,7 +32,7 @@ class DebtService:
                     user_id, type, counterparty_name, counterparty_type,
                     title, description, original_amount, remaining_amount,
                     issue_date, due_date, status, priority,
-                    source_id, reference_type, reference_id,
+                    wallet_id, reference_type, reference_id,
                     has_interest, interest_type, interest_rate
                 ) VALUES (
                     %s, %s, %s, %s,
@@ -49,7 +50,7 @@ class DebtService:
                     data["original_amount"], remaining,
                     data["issue_date"], data.get("due_date"), status,
                     data["priority"],
-                    data.get("source_id"), data.get("reference_type"),
+                    data.get("wallet_id"), data.get("reference_type"),
                     data.get("reference_id"),
                     data.get("has_interest", False),
                     data.get("interest_type"), data.get("interest_rate"),
@@ -84,7 +85,7 @@ class DebtService:
         try:
             existing = DebtService._get_owned(cursor, debt_id, user_id)
             if existing is None:
-                return None, "Debt not found"
+                return None, "بدهی یافت نشد"
             if existing["status"] in ("settled", "cancelled", "written_off"):
                 return None, f"Cannot edit a {existing['status']} debt"
 
@@ -97,7 +98,7 @@ class DebtService:
                     description = %s,
                     due_date = %s,
                     priority = %s,
-                    source_id = %s,
+                    wallet_id = %s,
                     has_interest = %s,
                     interest_type = %s,
                     interest_rate = %s
@@ -111,7 +112,7 @@ class DebtService:
                     data.get("description", existing["description"]),
                     data.get("due_date", existing["due_date"]),
                     data.get("priority", existing["priority"]),
-                    data.get("source_id", existing["source_id"]),
+                    data.get("wallet_id", existing["wallet_id"]),
                     data.get("has_interest", existing["has_interest"]),
                     data.get("interest_type", existing["interest_type"]),
                     data.get("interest_rate", existing["interest_rate"]),
@@ -143,46 +144,59 @@ class DebtService:
 
     @staticmethod
     def list_debts(user_id, debt_type=None, status=None, counterparty=None,
-                   limit=100, offset=0):
-        """List debts with optional filters."""
+                   page=1, per_page=20, wallet_id=None):
+        """List debts with optional filters and pagination."""
         conn = get_connection()
         cursor = conn.cursor()
         try:
-            query = """
-                SELECT d.*,
-                       COALESCE(p.payment_count, 0) AS payment_count,
-                       COALESCE(p.total_paid, 0) AS total_paid
-                FROM debts d
-                LEFT JOIN (
-                    SELECT debt_id,
-                           COUNT(*) AS payment_count,
-                           SUM(amount) AS total_paid
-                    FROM debt_payments
-                    WHERE deleted_at IS NULL
-                    GROUP BY debt_id
-                ) p ON d.id = p.debt_id
-                WHERE d.user_id = %s AND d.deleted_at IS NULL
-            """
+            where_clause = " WHERE d.user_id = %s AND d.deleted_at IS NULL"
             params = [user_id]
 
+            if wallet_id:
+                where_clause += " AND d.wallet_id = %s"
+                params.append(wallet_id)
             if debt_type:
-                query += " AND d.type = %s"
+                where_clause += " AND d.type = %s"
                 params.append(debt_type)
             if status:
                 if status == "overdue":
-                    query += " AND d.due_date < CURRENT_DATE AND d.remaining_amount > 0 AND d.status NOT IN ('settled','cancelled','written_off')"
+                    where_clause += " AND d.due_date < CURRENT_DATE AND d.remaining_amount > 0 AND d.status NOT IN ('settled','cancelled','written_off')"
                 else:
-                    query += " AND d.status = %s"
+                    where_clause += " AND d.status = %s"
                     params.append(status)
             if counterparty:
-                query += " AND d.counterparty_name ILIKE %s"
+                where_clause += " AND d.counterparty_name ILIKE %s"
                 params.append(f"%{counterparty}%")
 
-            query += " ORDER BY d.created_at DESC LIMIT %s OFFSET %s"
-            params.extend([limit, offset])
+            join_clause = (
+                " FROM debts d"
+                " LEFT JOIN ("
+                "   SELECT debt_id, COUNT(*) AS payment_count, SUM(amount) AS total_paid"
+                "   FROM debt_payments WHERE deleted_at IS NULL GROUP BY debt_id"
+                " ) p ON d.id = p.debt_id"
+            )
 
-            cursor.execute(query, params)
-            return [dict(r) for r in cursor.fetchall()]
+            count_sql = "SELECT COUNT(*) as total" + join_clause + where_clause
+            cursor.execute(count_sql, params)
+            total = cursor.fetchone()["total"]
+
+            data_sql = (
+                "SELECT d.*, COALESCE(p.payment_count, 0) AS payment_count,"
+                " COALESCE(p.total_paid, 0) AS total_paid"
+                + join_clause + where_clause + " ORDER BY d.created_at DESC"
+            )
+            offset = (page - 1) * per_page
+            cursor.execute(data_sql + " LIMIT %s OFFSET %s", params + [per_page, offset])
+            rows = cursor.fetchall()
+
+            total_pages = math.ceil(total / per_page) if per_page > 0 else 0
+            return {
+                "items": [dict(r) for r in rows],
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": total_pages,
+            }
         finally:
             cursor.close()
             release_connection(conn)
@@ -197,11 +211,11 @@ class DebtService:
         try:
             debt = DebtService._get_owned(cursor, debt_id, user_id)
             if debt is None:
-                return None, "Debt not found"
+                return None, "بدهی یافت نشد"
             if debt["status"] in ("settled", "cancelled", "written_off"):
                 return None, f"Cannot pay a {debt['status']} debt"
             if debt["remaining_amount"] <= 0:
-                return None, "Debt is already fully paid"
+                return None, "بدهی قبلاً کاملاً پرداخت شده است"
 
             amount = data["amount"]
             if amount > debt["remaining_amount"]:
@@ -213,13 +227,13 @@ class DebtService:
             # Insert payment
             cursor.execute(
                 """
-                INSERT INTO debt_payments (debt_id, amount, payment_date, payment_method, source_id, note)
+                INSERT INTO debt_payments (debt_id, amount, payment_date, payment_method, wallet_id, note)
                 VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING *
                 """,
                 (debt_id, amount, data["payment_date"],
                  data.get("payment_method", "cash"),
-                 data.get("source_id"), data.get("note")),
+                 data.get("wallet_id"), data.get("note")),
             )
             payment = dict(cursor.fetchone())
 
@@ -272,7 +286,7 @@ class DebtService:
             )
             row = cursor.fetchone()
             if row is None:
-                return False, "Payment not found"
+                return None, "پرداخت یافت نشد"
 
             amount = float(row["amount"])
             debt_id = row["debt_id"]
@@ -320,7 +334,7 @@ class DebtService:
             # Verify ownership
             debt = DebtService._get_owned(cursor, debt_id, user_id)
             if debt is None:
-                return None, "Debt not found"
+                return None, "بدهی یافت نشد"
 
             cursor.execute(
                 """
@@ -357,7 +371,7 @@ class DebtService:
         try:
             debt = DebtService._get_owned(cursor, debt_id, user_id)
             if debt is None:
-                return None, "Debt not found"
+                return None, "بدهی یافت نشد"
             if debt["remaining_amount"] > 0:
                 # Zero out remaining as adjustment
                 cursor.execute(
@@ -430,7 +444,7 @@ class DebtService:
     # ── Analytics / Summary ────────────────────────────────────────
 
     @staticmethod
-    def get_summary(user_id):
+    def get_summary(user_id, wallet_id=None):
         """Debt dashboard summary."""
         conn = get_connection()
         cursor = conn.cursor()
@@ -438,8 +452,14 @@ class DebtService:
             # Sync overdue first
             DebtService.sync_statuses(user_id)
 
+            wallet_filter = ""
+            params = [user_id]
+            if wallet_id:
+                wallet_filter = " AND wallet_id = %s"
+                params.append(wallet_id)
+
             cursor.execute(
-                """
+                f"""
                 SELECT
                     type,
                     status,
@@ -448,10 +468,10 @@ class DebtService:
                     SUM(original_amount)::numeric(15,2) AS total_original
                 FROM debts
                 WHERE user_id = %s AND deleted_at IS NULL
-                  AND status NOT IN ('settled', 'cancelled', 'written_off')
+                  AND status NOT IN ('settled', 'cancelled', 'written_off'){wallet_filter}
                 GROUP BY type, status
                 """,
-                (user_id,),
+                tuple(params),
             )
             rows = [dict(r) for r in cursor.fetchall()]
 
@@ -520,20 +540,25 @@ class DebtService:
             release_connection(conn)
 
     @staticmethod
-    def get_overdue(user_id):
+    def get_overdue(user_id, wallet_id=None):
         """List overdue debts."""
         DebtService.sync_statuses(user_id)
-        return DebtService.list_debts(user_id, status="overdue")
+        return DebtService.list_debts(user_id, status="overdue", wallet_id=wallet_id)
 
     @staticmethod
-    def get_due_soon(user_id, days=7):
+    def get_due_soon(user_id, days=7, wallet_id=None):
         """List debts due within N days."""
         conn = get_connection()
         cursor = conn.cursor()
         try:
             end_date = date.today() + timedelta(days=days)
+            wallet_filter = ""
+            params = [user_id, end_date]
+            if wallet_id:
+                wallet_filter = " AND d.wallet_id = %s"
+                params.append(wallet_id)
             cursor.execute(
-                """
+                f"""
                 SELECT d.*,
                        COALESCE(p.payment_count, 0) AS payment_count,
                        COALESCE(p.total_paid, 0) AS total_paid
@@ -546,10 +571,10 @@ class DebtService:
                 WHERE d.user_id = %s AND d.deleted_at IS NULL
                   AND d.status IN ('active', 'partially_paid', 'overdue')
                   AND d.due_date IS NOT NULL
-                  AND d.due_date BETWEEN CURRENT_DATE AND %s
+                  AND d.due_date BETWEEN CURRENT_DATE AND %s{wallet_filter}
                 ORDER BY d.due_date
                 """,
-                (user_id, end_date),
+                tuple(params),
             )
             return [dict(r) for r in cursor.fetchall()]
         finally:
@@ -564,7 +589,7 @@ class DebtService:
         try:
             debt = DebtService._get_owned(cursor, debt_id, user_id)
             if debt is None:
-                return None, "Debt not found"
+                return None, "بدهی یافت نشد"
             cursor.execute(
                 """
                 SELECT * FROM debt_status_history
@@ -751,7 +776,7 @@ class DebtService:
         try:
             debt = DebtService._get_owned(cursor, debt_id, user_id)
             if debt is None:
-                return None, "Debt not found"
+                return None, "بدهی یافت نشد"
             if debt["status"] == new_status:
                 return None, f"Debt is already {new_status}"
 

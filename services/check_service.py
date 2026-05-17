@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date, timedelta
 
 from database import get_connection, release_connection
@@ -19,12 +20,12 @@ from services.commitment_utils import (
 
 def _coerce_check_type(value) -> str:
     if value is None:
-        raise ValueError("type is required")
+        raise ValueError("نوع الزامی است")
     if not isinstance(value, str):
-        raise ValueError("type must be 'issued' or 'received'")
+        raise ValueError("نوع باید 'issued' یا 'received' باشد")
     value = value.strip().lower()
     if value not in ("issued", "received"):
-        raise ValueError("type must be 'issued' or 'received'")
+        raise ValueError("نوع باید 'issued' یا 'received' باشد")
     return value
 
 
@@ -51,7 +52,7 @@ class CheckService:
         check_type = _coerce_check_type(payload.get("type"))
 
         category_id = to_int(payload.get("category_id"), "category_id")
-        source_id = safe_int(payload.get("source_id"), "source_id")
+        wallet_id = safe_int(payload.get("wallet_id"), "wallet_id")
         description = (payload.get("description") or "").strip() or None
 
         conn = get_connection()
@@ -63,21 +64,21 @@ class CheckService:
             )
             row = cursor.fetchone()
             if row is None:
-                raise ValueError("Category not found")
+                raise ValueError("دسته‌بندی یافت نشد")
 
-            if source_id is not None:
+            if wallet_id is not None:
                 cursor.execute(
-                    "SELECT 1 FROM sources WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
-                    (source_id, user_id),
+                    "SELECT 1 FROM wallets WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
+                    (wallet_id, user_id),
                 )
                 if cursor.fetchone() is None:
-                    raise ValueError("Source not found")
+                    raise ValueError("کیف پول یافت نشد")
 
             cursor.execute(
                 """
                 INSERT INTO checks (
                     user_id, check_number, bank_name, amount, issue_date, due_date,
-                    type, source_id, category_id, description, status
+                    type, wallet_id, category_id, description, status
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
                 RETURNING id
                 """,
@@ -89,7 +90,7 @@ class CheckService:
                     to_iso_date(issue_date),
                     to_iso_date(due_date),
                     check_type,
-                    source_id,
+                    wallet_id,
                     category_id,
                     description,
                 ),
@@ -107,42 +108,53 @@ class CheckService:
             release_connection(conn)
 
     @staticmethod
-    def list_checks(user_id: int, params: dict) -> list[dict]:
+    def list_checks(user_id: int, params: dict, page: int = 1, per_page: int = 20) -> dict:
         status = params.get("status")
         bank_name = params.get("bank_name")
         check_number = params.get("check_number")
         check_type = params.get("check_type")
+        wallet_id = params.get("wallet_id")
 
         conn = get_connection()
         cursor = conn.cursor()
 
         try:
-            query = """
-                SELECT * FROM checks
-                WHERE user_id = %s AND deleted_at IS NULL
-            """
+            where_clause = " WHERE user_id = %s AND deleted_at IS NULL"
             db_params = [user_id]
 
+            if wallet_id:
+                where_clause += " AND wallet_id = %s"
+                db_params.append(wallet_id)
             if status:
-                query += " AND status = %s"
+                where_clause += " AND status = %s"
                 db_params.append(status)
             if bank_name:
-                query += " AND bank_name ILIKE %s"
+                where_clause += " AND bank_name ILIKE %s"
                 db_params.append(f"%{bank_name}%")
             if check_number:
-                query += " AND check_number ILIKE %s"
+                where_clause += " AND check_number ILIKE %s"
                 db_params.append(f"%{check_number}%")
             if check_type:
-                query += " AND type = %s"
+                where_clause += " AND type = %s"
                 db_params.append(check_type)
 
-            query += " ORDER BY due_date ASC"
+            count_sql = "SELECT COUNT(*) as total FROM checks" + where_clause
+            cursor.execute(count_sql, db_params)
+            total = cursor.fetchone()["total"]
 
-            print("List Checks" + query)
-            print("List Checks Params" + str(db_params))
+            data_sql = "SELECT * FROM checks" + where_clause + " ORDER BY due_date ASC"
+            offset = (page - 1) * per_page
+            cursor.execute(data_sql + " LIMIT %s OFFSET %s", db_params + [per_page, offset])
+            rows = cursor.fetchall()
 
-            cursor.execute(query, db_params)
-            return [_row_to_dict(row) for row in cursor.fetchall()]
+            total_pages = math.ceil(total / per_page) if per_page > 0 else 0
+            return {
+                "items": [_row_to_dict(row) for row in rows],
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": total_pages,
+            }
         finally:
             cursor.close()
             release_connection(conn)
@@ -158,7 +170,7 @@ class CheckService:
             )
             row = cursor.fetchone()
             if row is None:
-                raise ValueError("Check not found")
+                raise ValueError("چک یافت نشد")
             return _row_to_dict(row)
         finally:
             cursor.close()
@@ -176,7 +188,7 @@ class CheckService:
         try:
             cursor.execute(
                 """
-                SELECT id, type, category_id, source_id, amount, status, transaction_id
+                SELECT id, type, category_id, wallet_id, amount, status, transaction_id
                 FROM checks
                 WHERE id = %s AND user_id = %s AND deleted_at IS NULL
                 """,
@@ -184,17 +196,17 @@ class CheckService:
             )
             row = cursor.fetchone()
             if row is None:
-                raise ValueError("Check not found")
+                raise ValueError("چک یافت نشد")
 
             if row["status"] == "cleared":
-                raise ValueError("Check already cleared")
+                raise ValueError("چک قبلاً وصول شده است")
             if row["status"] in ("bounced", "canceled"):
-                raise ValueError(f"Cannot clear a {row['status']} check")
+                raise ValueError(f"امکان وصول چک با وضعیت {row['status']} وجود ندارد")
 
             category_type = get_category_type(cursor, row["category_id"], user_id)
             expected = "cost" if row["type"] == "issued" else "income"
             if category_type != expected:
-                raise ValueError(f"Category type must be '{expected}' for {row['type']} checks")
+                raise ValueError(f"نوع دسته‌بندی باید '{expected}' برای چک‌های {row['type']} باشد")
 
             tx_id = create_settlement_transaction(
                 cursor,
@@ -202,7 +214,7 @@ class CheckService:
                 tx_date=cleared_date_value,
                 amount=to_decimal(row["amount"]),
                 category_id=row["category_id"],
-                source_id=row["source_id"],
+                wallet_id=row["wallet_id"],
                 description=f"Check #{row['id']} cleared",
                 reference_type="check",
                 reference_id=row["id"],
@@ -246,9 +258,9 @@ class CheckService:
             )
             row = cursor.fetchone()
             if row is None:
-                raise ValueError("Check not found")
+                raise ValueError("چک یافت نشد")
             if row["status"] != "pending":
-                raise ValueError(f"Cannot bounce check with status {row['status']}")
+                raise ValueError(f"امکان برگشت چک با وضعیت {row['status']} وجود ندارد")
 
             cursor.execute(
                 """
@@ -283,9 +295,9 @@ class CheckService:
             )
             row = cursor.fetchone()
             if row is None:
-                raise ValueError("Check not found")
+                raise ValueError("چک یافت نشد")
             if row["status"] not in ("pending",):
-                raise ValueError(f"Cannot cancel check with status {row['status']}")
+                raise ValueError(f"امکان لغو چک با وضعیت {row['status']} وجود ندارد")
 
             cursor.execute(
                 """
@@ -313,7 +325,7 @@ class CheckService:
     ) -> dict:
         due_date_value = coerce_date(due_date)
         if due_date_value is None:
-            raise ValueError("due_date is required")
+            raise ValueError("تاریخ سررسید الزامی است")
 
         conn = get_connection()
         cursor = conn.cursor()
@@ -328,9 +340,9 @@ class CheckService:
             )
             row = cursor.fetchone()
             if row is None:
-                raise ValueError("Check not found")
+                raise ValueError("چک یافت نشد")
             if row["status"] not in ("pending",):
-                raise ValueError(f"Cannot update due date for status {row['status']}")
+                raise ValueError(f"امکان بروزرسانی تاریخ سررسید برای وضعیت {row['status']} وجود ندارد")
 
             cursor.execute(
                 """
@@ -343,7 +355,7 @@ class CheckService:
             )
             updated = cursor.fetchone()
             if updated is None:
-                raise ValueError("Check update failed")
+                raise ValueError("بروزرسانی چک ناموفق بود")
             conn.commit()
             return _row_to_dict(updated)
         except Exception:

@@ -316,13 +316,13 @@ class ItemReportViewScreen(Screen):
         current_item = None
         for row in data:
             name = (row["item_name"] or "")[:20]
-            source = (row["source_name"] or "")[:16]
+            wallet = (row["wallet_name"] or "")[:16]
             if current_item and current_item != name:
                 lines.append("\u2500" * w)
             current_item = name
             lines.append(
                 f"{name:<20} "
-                f"{source:<16} "
+                f"{wallet:<16} "
                 f"{format_toman(row['avg_price']):>12} "
                 f"{format_toman(row['min_price']):>12} "
                 f"{format_toman(row['max_price']):>12} "
@@ -430,10 +430,10 @@ class ItemReportViewScreen(Screen):
         lines.append("\u2500" * w)
         for row in data:
             name = (row["item_name"] or "")[:20]
-            source = (row["best_source"] or "")[:16]
+            wallet = (row["best_wallet"] or "")[:16]
             lines.append(
                 f"{name:<20} "
-                f"{source:<16} "
+                f"{wallet:<16} "
                 f"{format_toman(row['avg_price']):>14} "
                 f"{row['purchase_count']:>8}"
             )

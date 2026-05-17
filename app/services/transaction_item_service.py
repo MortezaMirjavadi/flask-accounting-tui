@@ -2,6 +2,14 @@
 
 from database import get_connection, release_connection
 
+_TX_ACCESS_WHERE = (
+    "(t.wallet_id IS NULL AND t.user_id = %s) "
+    "OR t.wallet_id IN ("
+    "SELECT id FROM wallets WHERE user_id = %s AND deleted_at IS NULL "
+    "UNION "
+    "SELECT wallet_id FROM wallet_members WHERE user_id = %s)"
+)
+
 
 class TransactionItemService:
 
@@ -43,17 +51,17 @@ class TransactionItemService:
     def get_items_by_transaction(cursor, transaction_id, user_id):
         """Return all active items for a transaction (ownership-checked)."""
         cursor.execute(
-            """
+            f"""
             SELECT ti.*
             FROM transaction_items ti
             JOIN transactions t ON ti.transaction_id = t.id
             WHERE ti.transaction_id = %s
-              AND t.user_id = %s
+              AND {_TX_ACCESS_WHERE}
               AND ti.deleted_at IS NULL
               AND t.deleted_at IS NULL
             ORDER BY ti.id
             """,
-            (transaction_id, user_id),
+            (transaction_id, user_id, user_id, user_id),
         )
         return [dict(r) for r in cursor.fetchall()]
 
@@ -61,16 +69,16 @@ class TransactionItemService:
     def get_item(cursor, item_id, user_id):
         """Return a single item (ownership-checked). Returns None if not found."""
         cursor.execute(
-            """
+            f"""
             SELECT ti.*
             FROM transaction_items ti
             JOIN transactions t ON ti.transaction_id = t.id
             WHERE ti.id = %s
-              AND t.user_id = %s
+              AND {_TX_ACCESS_WHERE}
               AND ti.deleted_at IS NULL
               AND t.deleted_at IS NULL
             """,
-            (item_id, user_id),
+            (item_id, user_id, user_id, user_id),
         )
         row = cursor.fetchone()
         return dict(row) if row else None
@@ -103,7 +111,7 @@ class TransactionItemService:
         )
         tx = cursor.fetchone()
         if tx is None:
-            raise ValueError("Transaction not found")
+            raise ValueError("تراکنش یافت نشد")
 
         cursor.execute(
             """
@@ -129,7 +137,7 @@ class TransactionItemService:
         try:
             existing = TransactionItemService.get_item(cursor, item_id, user_id)
             if existing is None:
-                raise ValueError("Item not found")
+                raise ValueError("قلم یافت نشد")
 
             cursor.execute(
                 """
@@ -167,7 +175,7 @@ class TransactionItemService:
         try:
             existing = TransactionItemService.get_item(cursor, item_id, user_id)
             if existing is None:
-                raise ValueError("Item not found")
+                raise ValueError("قلم یافت نشد")
 
             cursor.execute(
                 """
@@ -193,21 +201,21 @@ class TransactionItemService:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                """
+                f"""
                 SELECT ti.*, t.date as transaction_date, t.amount as transaction_amount,
                        t.description as transaction_description,
                        c.name as category_name
                 FROM transaction_items ti
                 JOIN transactions t ON ti.transaction_id = t.id
                 LEFT JOIN categories c ON t.category_id = c.id
-                WHERE t.user_id = %s
+                WHERE {_TX_ACCESS_WHERE}
                   AND ti.deleted_at IS NULL
                   AND t.deleted_at IS NULL
                   AND ti.name ILIKE %s
                 ORDER BY t.date DESC
                 LIMIT %s
                 """,
-                (user_id, f"%{search_term}%", limit),
+                (user_id, user_id, user_id, f"%{search_term}%", limit),
             )
             return [dict(r) for r in cursor.fetchall()]
         finally:
@@ -221,7 +229,7 @@ class TransactionItemService:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                """
+                f"""
                 SELECT
                     ti.name,
                     COUNT(*) as purchase_count,
@@ -230,14 +238,14 @@ class TransactionItemService:
                     AVG(ti.quantity)::numeric(10,2) as avg_quantity
                 FROM transaction_items ti
                 JOIN transactions t ON ti.transaction_id = t.id
-                WHERE t.user_id = %s
+                WHERE {_TX_ACCESS_WHERE}
                   AND ti.deleted_at IS NULL
                   AND t.deleted_at IS NULL
                 GROUP BY ti.name
                 ORDER BY total_spent DESC
                 LIMIT %s
                 """,
-                (user_id, limit),
+                (user_id, user_id, user_id, limit),
             )
             results = []
             for r in cursor.fetchall():
@@ -259,7 +267,7 @@ class TransactionItemService:
         try:
             # Overall stats
             cursor.execute(
-                """
+                f"""
                 SELECT
                     COUNT(*) as purchase_count,
                     SUM(ti.total_price) as total_spent,
@@ -270,12 +278,12 @@ class TransactionItemService:
                     MAX(t.date) as last_purchased
                 FROM transaction_items ti
                 JOIN transactions t ON ti.transaction_id = t.id
-                WHERE t.user_id = %s
+                WHERE {_TX_ACCESS_WHERE}
                   AND ti.deleted_at IS NULL
                   AND t.deleted_at IS NULL
                   AND ti.name = %s
                 """,
-                (user_id, item_name),
+                (user_id, user_id, user_id, item_name),
             )
             overall = cursor.fetchone()
             if overall is None or overall["purchase_count"] == 0:
@@ -289,14 +297,14 @@ class TransactionItemService:
 
             # Monthly breakdown
             cursor.execute(
-                """
+                f"""
                 SELECT
                     TO_CHAR(t.date, 'YYYY-MM') as month,
                     SUM(ti.total_price)::numeric(15,2) as monthly_total,
                     COUNT(*) as monthly_count
                 FROM transaction_items ti
                 JOIN transactions t ON ti.transaction_id = t.id
-                WHERE t.user_id = %s
+                WHERE {_TX_ACCESS_WHERE}
                   AND ti.deleted_at IS NULL
                   AND t.deleted_at IS NULL
                   AND ti.name = %s
@@ -304,7 +312,7 @@ class TransactionItemService:
                 ORDER BY month DESC
                 LIMIT 12
                 """,
-                (user_id, item_name),
+                (user_id, user_id, user_id, item_name),
             )
             monthly = []
             for r in cursor.fetchall():
@@ -315,18 +323,18 @@ class TransactionItemService:
 
             # Price history
             cursor.execute(
-                """
+                f"""
                 SELECT ti.total_price, ti.quantity, ti.unit_price, t.date
                 FROM transaction_items ti
                 JOIN transactions t ON ti.transaction_id = t.id
-                WHERE t.user_id = %s
+                WHERE {_TX_ACCESS_WHERE}
                   AND ti.deleted_at IS NULL
                   AND t.deleted_at IS NULL
                   AND ti.name = %s
                 ORDER BY t.date DESC
                 LIMIT 20
                 """,
-                (user_id, item_name),
+                (user_id, user_id, user_id, item_name),
             )
             history = []
             for r in cursor.fetchall():

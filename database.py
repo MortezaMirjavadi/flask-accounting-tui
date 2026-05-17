@@ -88,6 +88,17 @@ def _ensure_column(cursor, table_name, column_name, definition):
         cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
 
 
+def _rename_column_if_exists(cursor, table_name, old_column, new_column):
+    """Rename a column if it exists."""
+    cursor.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = %s AND column_name = %s
+    """, (table_name, old_column))
+    if cursor.fetchone() is not None:
+        cursor.execute(f"ALTER TABLE {table_name} RENAME COLUMN {old_column} TO {new_column}")
+
+
 def _ensure_updated_at_trigger(cursor, table_name):
     trigger_name = f"trg_{table_name}_set_updated_at"
     cursor.execute(f"DROP TRIGGER IF EXISTS {trigger_name} ON {table_name}")
@@ -144,13 +155,52 @@ def init_db():
             )
         """)
         
-        # Sources table
+        # ── Migration: rename sources -> wallets for existing databases ────
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS sources (
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables WHERE table_name = 'sources'
+            )
+        """)
+        has_sources = cursor.fetchone()['exists']
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables WHERE table_name = 'wallets'
+            )
+        """)
+        has_wallets = cursor.fetchone()['exists']
+
+        if has_sources and not has_wallets:
+            # Rename main table
+            cursor.execute("ALTER TABLE sources RENAME TO wallets")
+
+            # Rename FK columns in dependent tables
+            _rename_column_if_exists(cursor, "transactions", "source_id", "wallet_id")
+            _rename_column_if_exists(cursor, "installment_plans", "source_id", "wallet_id")
+            _rename_column_if_exists(cursor, "checks", "source_id", "wallet_id")
+            _rename_column_if_exists(cursor, "financial_events", "source_id", "wallet_id")
+            _rename_column_if_exists(cursor, "debts", "source_id", "wallet_id")
+            _rename_column_if_exists(cursor, "debt_payments", "source_id", "wallet_id")
+            _rename_column_if_exists(cursor, "transfers", "from_source_id", "from_wallet_id")
+            _rename_column_if_exists(cursor, "transfers", "to_source_id", "to_wallet_id")
+
+            # Rename junction table source_labels -> wallet_labels
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables WHERE table_name = 'source_labels'
+                )
+            """)
+            if cursor.fetchone()['exists']:
+                cursor.execute("ALTER TABLE source_labels RENAME TO wallet_labels")
+                _rename_column_if_exists(cursor, "wallet_labels", "source_id", "wallet_id")
+
+            print("[DB] Migrated 'sources' -> 'wallets'")
+
+        # Wallets table (formerly sources) — wallets are containers, balances live on accounts
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS wallets (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL REFERENCES users(id),
                 name VARCHAR(255) NOT NULL,
-                amount NUMERIC(15, 2) NOT NULL DEFAULT 0,
                 UNIQUE(user_id, name),
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -165,7 +215,7 @@ def init_db():
                 date DATE NOT NULL,
                 amount NUMERIC(15, 2) NOT NULL,
                 category_id INTEGER NOT NULL REFERENCES categories(id),
-                source_id INTEGER REFERENCES sources(id),
+                wallet_id INTEGER REFERENCES wallets(id),
                 description TEXT,
                 reference_type TEXT,
                 reference_id INTEGER,
@@ -203,7 +253,7 @@ def init_db():
                 start_date DATE NOT NULL,
                 due_day_of_month INTEGER NOT NULL CHECK (due_day_of_month BETWEEN 1 AND 31),
                 category_id INTEGER NOT NULL REFERENCES categories(id),
-                source_id INTEGER REFERENCES sources(id),
+                wallet_id INTEGER REFERENCES wallets(id),
                 status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'canceled')),
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -237,7 +287,7 @@ def init_db():
                 issue_date DATE NOT NULL,
                 due_date DATE NOT NULL,
                 type VARCHAR(20) NOT NULL CHECK (type IN ('issued', 'received')),
-                source_id INTEGER REFERENCES sources(id),
+                wallet_id INTEGER REFERENCES wallets(id),
                 category_id INTEGER NOT NULL REFERENCES categories(id),
                 status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'cleared', 'bounced', 'canceled')),
                 transaction_id INTEGER REFERENCES transactions(id),
@@ -283,7 +333,7 @@ def init_db():
                 description TEXT,
                 amount NUMERIC(15, 2) NOT NULL,
                 category_id INTEGER NOT NULL REFERENCES categories(id),
-                source_id INTEGER REFERENCES sources(id),
+                wallet_id INTEGER REFERENCES wallets(id),
                 frequency VARCHAR(50) NOT NULL DEFAULT 'once',
                 repeat_interval INTEGER NOT NULL DEFAULT 1,
                 start_date DATE NOT NULL,
@@ -318,21 +368,20 @@ def init_db():
             CREATE TABLE IF NOT EXISTS transfers (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                from_source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE RESTRICT,
-                to_source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE RESTRICT,
+                from_wallet_id INTEGER REFERENCES wallets(id) ON DELETE RESTRICT,
+                to_wallet_id INTEGER REFERENCES wallets(id) ON DELETE RESTRICT,
                 amount NUMERIC(15, 2) NOT NULL CHECK(amount > 0),
                 date DATE NOT NULL,
                 notes TEXT,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CHECK(from_source_id != to_source_id)
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
         # Create indexes for transfers
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_transfers_user ON transfers(user_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transfers_from_source ON transfers(from_source_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transfers_to_source ON transfers(to_source_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transfers_from_wallet ON transfers(from_wallet_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transfers_to_wallet ON transfers(to_wallet_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_transfers_date ON transfers(date)")
 
         # ── Debts & Receivables ────────────────────────────────────
@@ -359,7 +408,7 @@ def init_db():
                     CHECK(priority IN ('low','normal','high','urgent')),
                 reference_type VARCHAR(50),
                 reference_id INTEGER,
-                source_id INTEGER REFERENCES sources(id),
+                wallet_id INTEGER REFERENCES wallets(id),
                 has_interest BOOLEAN NOT NULL DEFAULT FALSE,
                 interest_type VARCHAR(20) CHECK(interest_type IN ('simple','compound','fixed')),
                 interest_rate NUMERIC(8, 4),
@@ -385,7 +434,7 @@ def init_db():
                 amount NUMERIC(15, 2) NOT NULL CHECK(amount > 0),
                 payment_date DATE NOT NULL,
                 payment_method VARCHAR(50) DEFAULT 'cash',
-                source_id INTEGER REFERENCES sources(id),
+                wallet_id INTEGER REFERENCES wallets(id),
                 note TEXT,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -480,13 +529,125 @@ def init_db():
             )
         """)
 
-        # ── Junction: source_labels ─────────────────────────────────────
+        # ── Junction: wallet_labels ─────────────────────────────────────
 
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS source_labels (
-                source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+            CREATE TABLE IF NOT EXISTS wallet_labels (
+                wallet_id INTEGER NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
                 label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
-                PRIMARY KEY (source_id, label_id)
+                PRIMARY KEY (wallet_id, label_id)
+            )
+        """)
+
+        # ── Accounts (sources inside wallets) ─────────────────────────
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS accounts (
+                id SERIAL PRIMARY KEY,
+                wallet_id INTEGER NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+                name VARCHAR(255) NOT NULL,
+                account_type VARCHAR(30) NOT NULL DEFAULT 'cash'
+                    CHECK(account_type IN ('cash','bank','card','savings','wallet','other')),
+                bank_type VARCHAR(50) DEFAULT 'cash',
+                amount NUMERIC(15, 2) NOT NULL DEFAULT 0,
+                currency VARCHAR(3) NOT NULL DEFAULT 'IRR',
+                icon VARCHAR(50),
+                description TEXT,
+                is_default BOOLEAN NOT NULL DEFAULT FALSE,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                deleted_at TIMESTAMP,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(wallet_id, name)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_wallet ON accounts(wallet_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_wallet_active ON accounts(wallet_id, deleted_at)")
+
+        # ── Migration: remove currency from accounts (inherited from wallet) ──
+        cursor.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'accounts' AND column_name = 'currency'
+        """)
+        if cursor.fetchone() is not None:
+            cursor.execute("ALTER TABLE accounts DROP COLUMN currency")
+            print("[DB] Dropped 'currency' column from accounts (inherited from wallet)")
+
+        # Wallet members (shared wallet access)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS wallet_members (
+                id SERIAL PRIMARY KEY,
+                wallet_id INTEGER NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                role VARCHAR(20) NOT NULL DEFAULT 'viewer' CHECK(role IN ('owner','editor','viewer')),
+                joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                invited_by INTEGER REFERENCES users(id),
+                UNIQUE(wallet_id, user_id)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_wallet_members_user ON wallet_members(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_wallet_members_wallet ON wallet_members(wallet_id)")
+
+        # ── Wallet invitations ────────────────────────────────────────
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS wallet_invitations (
+                id SERIAL PRIMARY KEY,
+                wallet_id INTEGER NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+                inviter_id INTEGER NOT NULL REFERENCES users(id),
+                invitee_id INTEGER NOT NULL REFERENCES users(id),
+                role VARCHAR(20) NOT NULL DEFAULT 'viewer' CHECK(role IN ('editor','viewer')),
+                status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','accepted','rejected','revoked')),
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(wallet_id, invitee_id, status)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_wallet_invitations_invitee ON wallet_invitations(invitee_id, status)")
+
+        # ── Wallet activity log ───────────────────────────────────────
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS wallet_activity_log (
+                id SERIAL PRIMARY KEY,
+                wallet_id INTEGER NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                action VARCHAR(50) NOT NULL,
+                entity_type VARCHAR(50),
+                entity_id INTEGER,
+                details JSONB,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_wallet_activity_wallet ON wallet_activity_log(wallet_id, created_at)")
+
+        # ── Exchange rates (manual) ───────────────────────────────────
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS exchange_rates (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                from_currency VARCHAR(3) NOT NULL,
+                to_currency VARCHAR(3) NOT NULL,
+                rate NUMERIC(18, 8) NOT NULL CHECK(rate > 0),
+                effective_date DATE NOT NULL DEFAULT CURRENT_DATE,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, from_currency, to_currency, effective_date)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_exchange_rates_user_currencies ON exchange_rates(user_id, from_currency, to_currency)")
+
+        # ── User preferences ──────────────────────────────────────────
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_preferences (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
+                preferred_currency VARCHAR(3) NOT NULL DEFAULT 'IRR',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -499,7 +660,7 @@ def init_db():
 
         for table_name in (
             "categories",
-            "sources",
+            "wallets",
             "transactions",
             "transaction_items",
             "installment_plans",
@@ -515,13 +676,15 @@ def init_db():
             "contacts",
             "tags",
             "labels",
+            "accounts",
+            "wallet_invitations",
         ):
             _ensure_column(cursor, table_name, "deleted_at", "TIMESTAMP")
 
         for table_name in (
             "users",
             "categories",
-            "sources",
+            "wallets",
             "transactions",
             "transaction_items",
             "installment_plans",
@@ -538,6 +701,12 @@ def init_db():
             "contacts",
             "tags",
             "labels",
+            "accounts",
+            "wallet_members",
+            "wallet_invitations",
+            "wallet_activity_log",
+            "exchange_rates",
+            "user_preferences",
         ):
             _ensure_column(cursor, table_name, "created_at", "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP")
             _ensure_column(cursor, table_name, "updated_at", "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP")
@@ -545,7 +714,7 @@ def init_db():
         for table_name in (
             "users",
             "categories",
-            "sources",
+            "wallets",
             "transactions",
             "transaction_items",
             "installment_plans",
@@ -562,6 +731,12 @@ def init_db():
             "contacts",
             "tags",
             "labels",
+            "accounts",
+            "wallet_members",
+            "wallet_invitations",
+            "wallet_activity_log",
+            "exchange_rates",
+            "user_preferences",
         ):
             _ensure_updated_at_trigger(cursor, table_name)
 
@@ -575,10 +750,53 @@ def init_db():
         _ensure_column(cursor, "users", "is_active", "BOOLEAN NOT NULL DEFAULT TRUE")
         _ensure_column(cursor, "users", "display_name", "VARCHAR(255)")
         _ensure_column(cursor, "users", "email", "VARCHAR(255)")
+        _ensure_column(cursor, "wallets", "currency", "VARCHAR(3) NOT NULL DEFAULT 'IRR'")
+        _ensure_column(cursor, "wallets", "wallet_type", "VARCHAR(20) NOT NULL DEFAULT 'personal'")
+        _ensure_column(cursor, "wallets", "icon", "VARCHAR(50)")
+        _ensure_column(cursor, "wallets", "description", "TEXT")
+        _ensure_column(cursor, "wallets", "variant", "VARCHAR(30)")
+
+        # Accounts columns on transactions/transfers
+        _ensure_column(cursor, "transactions", "account_id", "INTEGER REFERENCES accounts(id)")
+        _ensure_column(cursor, "transactions", "is_private", "BOOLEAN NOT NULL DEFAULT FALSE")
+        _ensure_column(cursor, "transfers", "from_account_id", "INTEGER REFERENCES accounts(id)")
+        _ensure_column(cursor, "transfers", "to_account_id", "INTEGER REFERENCES accounts(id)")
+
+        # Migration: transfers are now between accounts within a wallet, not between wallets
+        # Make wallet columns nullable (derived from accounts) and fix CHECK constraint
+        cursor.execute("""
+            SELECT conname FROM pg_constraint
+            WHERE conrelid = 'transfers'::regclass AND contype = 'c'
+              AND pg_get_constraintdef(oid) LIKE '%from_wallet_id%to_wallet_id%'
+        """)
+        old_check = cursor.fetchone()
+        if old_check:
+            cursor.execute(f"ALTER TABLE transfers DROP CONSTRAINT {old_check['conname']}")
+            print(f"[DB] Dropped old transfers CHECK constraint: {old_check['conname']}")
+
+        # Make wallet columns nullable
+        cursor.execute("ALTER TABLE transfers ALTER COLUMN from_wallet_id DROP NOT NULL")
+        cursor.execute("ALTER TABLE transfers ALTER COLUMN to_wallet_id DROP NOT NULL")
+
+        # Add account-level CHECK constraint
+        cursor.execute("""
+            SELECT conname FROM pg_constraint
+            WHERE conrelid = 'transfers'::regclass AND contype = 'c'
+              AND pg_get_constraintdef(oid) LIKE '%from_account_id%to_account_id%'
+        """)
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE transfers ADD CONSTRAINT transfers_different_accounts CHECK(from_account_id IS NULL OR to_account_id IS NULL OR from_account_id != to_account_id)")
+            print("[DB] Added transfers CHECK(from_account_id != to_account_id)")
+
+        # Indexes for new columns
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transfers_from_account ON transfers(from_account_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transfers_to_account ON transfers(to_account_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_private ON transactions(wallet_id, is_private) WHERE is_private = TRUE")
 
         for table_name in (
             "categories",
-            "sources",
+            "wallets",
             "transactions",
             "transaction_items",
             "transfers",
@@ -593,9 +811,90 @@ def init_db():
             "contacts",
             "tags",
             "labels",
+            "accounts",
+            "wallet_members",
+            "wallet_invitations",
+            "wallet_activity_log",
+            "exchange_rates",
+            "user_preferences",
         ):
             cursor.execute(f"UPDATE {table_name} SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL")
             cursor.execute(f"UPDATE {table_name} SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL")
+
+        # Seed wallet_members for existing wallets (owner role)
+        cursor.execute("""
+            INSERT INTO wallet_members (wallet_id, user_id, role)
+            SELECT w.id, w.user_id, 'owner' FROM wallets w
+            WHERE NOT EXISTS (
+                SELECT 1 FROM wallet_members wm WHERE wm.wallet_id = w.id AND wm.user_id = w.user_id
+            )
+        """)
+
+        # ── Migration: create default accounts for existing wallets ──
+        # Only run if wallets still has bank_type and amount columns (legacy)
+        cursor.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'wallets' AND column_name IN ('bank_type', 'amount')
+        """)
+        legacy_cols = {row['column_name'] for row in cursor.fetchall()}
+
+        if 'bank_type' in legacy_cols and 'amount' in legacy_cols:
+            cursor.execute("""
+                INSERT INTO accounts (wallet_id, name, account_type, bank_type, amount, icon, description, is_default, sort_order)
+                SELECT
+                    w.id,
+                    w.name,
+                    CASE WHEN w.bank_type = 'cash' THEN 'cash' ELSE 'bank' END,
+                    w.bank_type,
+                    w.amount,
+                    w.icon,
+                    w.description,
+                    TRUE,
+                    0
+                FROM wallets w
+                WHERE w.deleted_at IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM accounts a WHERE a.wallet_id = w.id AND a.is_default = TRUE
+                  )
+            """)
+
+            # Drop legacy columns from wallets (balances now live on accounts)
+            cursor.execute("ALTER TABLE wallets DROP COLUMN IF EXISTS amount")
+            cursor.execute("ALTER TABLE wallets DROP COLUMN IF EXISTS bank_type")
+            print("[DB] Dropped legacy 'amount' and 'bank_type' columns from wallets")
+
+        # Back-fill transactions.account_id from default accounts
+        cursor.execute("""
+            UPDATE transactions t
+            SET account_id = a.id
+            FROM accounts a
+            WHERE a.wallet_id = t.wallet_id
+              AND a.is_default = TRUE
+              AND t.account_id IS NULL
+              AND t.wallet_id IS NOT NULL
+        """)
+
+        # Back-fill transfers.from_account_id
+        cursor.execute("""
+            UPDATE transfers t
+            SET from_account_id = a.id
+            FROM accounts a
+            WHERE a.wallet_id = t.from_wallet_id
+              AND a.is_default = TRUE
+              AND t.from_account_id IS NULL
+              AND t.from_wallet_id IS NOT NULL
+        """)
+
+        # Back-fill transfers.to_account_id
+        cursor.execute("""
+            UPDATE transfers t
+            SET to_account_id = a.id
+            FROM accounts a
+            WHERE a.wallet_id = t.to_wallet_id
+              AND a.is_default = TRUE
+              AND t.to_account_id IS NULL
+              AND t.to_wallet_id IS NOT NULL
+        """)
 
         # Create indexes for calendar and forecasting modules
         cursor.execute("""

@@ -125,7 +125,7 @@ class TransactionListScreen(Screen):
         self._update_throttle_ms = 50  # Only update every 50ms
         
         table = self.query_one("#tx_table", DataTable)
-        table.add_columns("ID", "Date", "Amount", "Category", "Source", "Description")
+        table.add_columns("ID", "Date", "Amount", "Category", "Wallet", "Description")
         table.cursor_type = "row"
         table.zebra_stripes = True
         self.load_data()
@@ -152,7 +152,7 @@ class TransactionListScreen(Screen):
                     t.get("date", ""),
                     format_toman(t.get("amount", 0)),
                     t.get("category_name", "N/A"),
-                    t.get("source_name") or "-",
+                    t.get("wallet_name") or "-",
                     (t.get("description") or "")[:25],
                 )
                 for t in self._data
@@ -239,7 +239,7 @@ class TransactionListScreen(Screen):
             f"[b]Date:[/b]        {tx.get('date', '')}\n"
             f"[b]Amount:[/b]      {format_toman(tx.get('amount', 0))}\n"
             f"[b]Category:[/b]    {tx.get('category_name', 'N/A')}\n"
-            f"[b]Source:[/b]      {tx.get('source_name') or '-'}\n"
+            f"[b]Source:[/b]      {tx.get('wallet_name') or '-'}\n"
             f"[b]Description:[/b] {tx.get('description') or '-'}\n"
         )
 
@@ -419,7 +419,7 @@ class TransactionByCategoryScreen(Screen):
                         tx_marker = ">" if tx_selected else " "
                         lines.append(
                             f"   {tx_marker}  {t.get('date','')}  {format_toman(t.get('amount',0)):>20}  "
-                            f"{(t.get('source_name') or '-'):<12}  {(t.get('description') or '-')[:30]}"
+                            f"{(t.get('wallet_name') or '-'):<12}  {(t.get('description') or '-')[:30]}"
                         )
             lines.append("")
 
@@ -568,7 +568,7 @@ class TransactionAddScreen(Screen):
                         yield Select([], prompt="Loading...", id="tx_primary_select")
                     yield Static("", classes="form_col_spacer")
                     with Vertical(classes="form_col"):
-                        yield Label("Source:", id="tx_secondary_label")
+                        yield Label("Wallet:", id="tx_secondary_label")
                         yield Select([], prompt="Loading...", id="tx_secondary_select")
                 yield Label("Note (optional):")
                 yield TextArea(id="tx_desc")
@@ -600,12 +600,12 @@ class TransactionAddScreen(Screen):
         self.query_one("#tx_date", Input).value = date_str
 
         self._category_options = []
-        self._source_options = []
+        self._wallet_options = []
         self._items = []
         self._available_tags = []
         self._available_labels = []
         self.load_categories()
-        self.load_sources()
+        self.load_wallets()
         self._apply_dynamic_fields(False)
         self._load_tag_options()
         self._load_label_options()
@@ -639,16 +639,16 @@ class TransactionAddScreen(Screen):
             self._category_options = [(f"{c['name']} ({c['type']})", c["id"]) for c in data]
         self._apply_dynamic_fields(self.query_one("#tx_is_transfer", Checkbox).value)
 
-    def load_sources(self):
-        resp = api_get("/sources", username=self.app.user.get("username"))
+    def load_wallets(self):
+        resp = api_get("/wallets", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
-            self._source_options = []
+            self._wallet_options = []
             return
         if not data:
-            self._source_options = []
+            self._wallet_options = []
         else:
-            self._source_options = [(s["name"], s["id"]) for s in data]
+            self._wallet_options = [(s["name"], s["id"]) for s in data]
         self._apply_dynamic_fields(self.query_one("#tx_is_transfer", Checkbox).value)
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
@@ -662,19 +662,19 @@ class TransactionAddScreen(Screen):
         secondary_select = self.query_one("#tx_secondary_select", Select)
 
         if is_transfer:
-            primary_label.update("From Source:")
-            secondary_label.update("To Source:")
-            primary_select.set_options(self._source_options)
-            secondary_select.set_options(self._source_options)
-            primary_select.prompt = "Select source" if self._source_options else "No sources"
-            secondary_select.prompt = "Select source" if self._source_options else "No sources"
+            primary_label.update("From Wallet:")
+            secondary_label.update("To Wallet:")
+            primary_select.set_options(self._wallet_options)
+            secondary_select.set_options(self._wallet_options)
+            primary_select.prompt = "Select wallet" if self._wallet_options else "No wallets"
+            secondary_select.prompt = "Select wallet" if self._wallet_options else "No wallets"
         else:
             primary_label.update("Category:")
-            secondary_label.update("Source:")
+            secondary_label.update("Wallet:")
             primary_select.set_options(self._category_options)
-            secondary_select.set_options(self._source_options)
+            secondary_select.set_options(self._wallet_options)
             primary_select.prompt = "Select category" if self._category_options else "No categories"
-            secondary_select.prompt = "Select source" if self._source_options else "No sources"
+            secondary_select.prompt = "Select wallet" if self._wallet_options else "No wallets"
 
         primary_select.clear()
         secondary_select.clear()
@@ -743,25 +743,25 @@ class TransactionAddScreen(Screen):
 
         if is_transfer:
             if primary_value is None or primary_value == Select.BLANK:
-                self.app.push_screen(MessageBox("From source is required", "Validation"))
+                self.app.push_screen(MessageBox("From wallet is required", "Validation"))
                 return
             if secondary_value is None or secondary_value == Select.BLANK:
-                self.app.push_screen(MessageBox("To source is required", "Validation"))
+                self.app.push_screen(MessageBox("To wallet is required", "Validation"))
                 return
             if primary_value == secondary_value:
-                self.app.push_screen(MessageBox("From source and to source must be different", "Validation"))
+                self.app.push_screen(MessageBox("From wallet and to wallet must be different", "Validation"))
                 return
 
             payload["is_transfer"] = True
-            payload["from_source_id"] = primary_value
-            payload["to_source_id"] = secondary_value
+            payload["from_wallet_id"] = primary_value
+            payload["to_wallet_id"] = secondary_value
         else:
             if primary_value is None or primary_value == Select.BLANK:
                 self.app.push_screen(MessageBox("Category is required", "Validation"))
                 return
             payload["category_id"] = primary_value
             if secondary_value is not None and secondary_value != Select.BLANK:
-                payload["source_id"] = secondary_value
+                payload["wallet_id"] = secondary_value
             # Include items if any
             if self._items:
                 payload["items"] = [
@@ -888,7 +888,7 @@ class TransactionEditScreen(Screen):
                         yield Select([], prompt="Loading...", id="tx_primary_select")
                     yield Static("", classes="form_col_spacer")
                     with Vertical(classes="form_col"):
-                        yield Label("Source:", id="tx_secondary_label")
+                        yield Label("Wallet:", id="tx_secondary_label")
                         yield Select([], prompt="Loading...", id="tx_secondary_select")
                 yield Label("Note (optional):")
                 yield TextArea(id="tx_desc")
@@ -920,10 +920,10 @@ class TransactionEditScreen(Screen):
         self.query_one("#tx_date", Input).value = date_str
 
         self._category_options = []
-        self._source_options = []
+        self._wallet_options = []
         self._items = []
         self.load_categories()
-        self.load_sources()
+        self.load_wallets()
         self._load_tag_options()
         self._load_label_options()
 
@@ -950,15 +950,15 @@ class TransactionEditScreen(Screen):
         primary_select = self.query_one("#tx_primary_select", Select)
         secondary_select = self.query_one("#tx_secondary_select", Select)
         if self._original_is_transfer:
-            if data.get("from_source_id") is not None:
-                primary_select.value = data.get("from_source_id")
-            if data.get("to_source_id") is not None:
-                secondary_select.value = data.get("to_source_id")
+            if data.get("from_wallet_id") is not None:
+                primary_select.value = data.get("from_wallet_id")
+            if data.get("to_wallet_id") is not None:
+                secondary_select.value = data.get("to_wallet_id")
         else:
             if data.get("category_id") is not None:
                 primary_select.value = data.get("category_id")
-            if data.get("source_id") is not None:
-                secondary_select.value = data.get("source_id")
+            if data.get("wallet_id") is not None:
+                secondary_select.value = data.get("wallet_id")
         self._hydrating_form = False
 
         # Load existing items
@@ -987,17 +987,17 @@ class TransactionEditScreen(Screen):
             self._category_options = [(f"{c['name']} ({c['type']})", c["id"]) for c in data]
         self._apply_dynamic_fields(self.query_one("#tx_is_transfer", Checkbox).value)
 
-    def load_sources(self):
-        resp = api_get("/sources", username=self.app.user.get("username"))
+    def load_wallets(self):
+        resp = api_get("/wallets", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
-            self._source_options = []
+            self._wallet_options = []
             self._apply_dynamic_fields(self.query_one("#tx_is_transfer", Checkbox).value)
             return
         if not data:
-            self._source_options = []
+            self._wallet_options = []
         else:
-            self._source_options = [(s["name"], s["id"]) for s in data]
+            self._wallet_options = [(s["name"], s["id"]) for s in data]
         self._apply_dynamic_fields(self.query_one("#tx_is_transfer", Checkbox).value)
 
     def _load_tag_options(self):
@@ -1043,19 +1043,19 @@ class TransactionEditScreen(Screen):
         secondary_select = self.query_one("#tx_secondary_select", Select)
 
         if is_transfer:
-            primary_label.update("From Source:")
-            secondary_label.update("To Source:")
-            primary_select.set_options(self._source_options)
-            secondary_select.set_options(self._source_options)
-            primary_select.prompt = "Select source" if self._source_options else "No sources"
-            secondary_select.prompt = "Select source" if self._source_options else "No sources"
+            primary_label.update("From Wallet:")
+            secondary_label.update("To Wallet:")
+            primary_select.set_options(self._wallet_options)
+            secondary_select.set_options(self._wallet_options)
+            primary_select.prompt = "Select wallet" if self._wallet_options else "No wallets"
+            secondary_select.prompt = "Select wallet" if self._wallet_options else "No wallets"
         else:
             primary_label.update("Category:")
-            secondary_label.update("Source:")
+            secondary_label.update("Wallet:")
             primary_select.set_options(self._category_options)
-            secondary_select.set_options(self._source_options)
+            secondary_select.set_options(self._wallet_options)
             primary_select.prompt = "Select category" if self._category_options else "No categories"
-            secondary_select.prompt = "Select source" if self._source_options else "No sources"
+            secondary_select.prompt = "Select wallet" if self._wallet_options else "No wallets"
 
         if clear_selection:
             primary_select.clear()
@@ -1165,23 +1165,23 @@ class TransactionEditScreen(Screen):
 
         if is_transfer:
             if primary_value is None or primary_value == Select.BLANK:
-                self.app.push_screen(MessageBox("From source is required", "Validation"))
+                self.app.push_screen(MessageBox("From wallet is required", "Validation"))
                 return
             if secondary_value is None or secondary_value == Select.BLANK:
-                self.app.push_screen(MessageBox("To source is required", "Validation"))
+                self.app.push_screen(MessageBox("To wallet is required", "Validation"))
                 return
             if primary_value == secondary_value:
-                self.app.push_screen(MessageBox("From source and to source must be different", "Validation"))
+                self.app.push_screen(MessageBox("From wallet and to wallet must be different", "Validation"))
                 return
-            payload["from_source_id"] = primary_value
-            payload["to_source_id"] = secondary_value
+            payload["from_wallet_id"] = primary_value
+            payload["to_wallet_id"] = secondary_value
         else:
             if primary_value is None or primary_value == Select.BLANK:
                 self.app.push_screen(MessageBox("Category is required", "Validation"))
                 return
             payload["category_id"] = primary_value
             if secondary_value is not None and secondary_value != Select.BLANK:
-                payload["source_id"] = secondary_value
+                payload["wallet_id"] = secondary_value
             # Include items if any
             if self._items:
                 payload["items"] = [

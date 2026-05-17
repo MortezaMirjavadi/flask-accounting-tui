@@ -6,15 +6,15 @@ def validate_user_payload(data):
     password = data.get("password", "")
 
     if not username or len(username) < 3:
-        raise ValueError("Username must be at least 3 characters")
+        raise ValueError("نام کاربری باید حداقل ۳ کاراکتر باشد")
     if not password or len(password) < 6:
-        raise ValueError("Password must be at least 6 characters")
+        raise ValueError("رمز عبور باید حداقل ۶ کاراکتر باشد")
 
     display_name = data.get("display_name", "").strip() or None
     email = data.get("email", "").strip() or None
 
     if email and "@" not in email:
-        raise ValueError("Invalid email address")
+        raise ValueError("آدرس ایمیل نامعتبر است")
 
     return {
         "username": username,
@@ -28,30 +28,42 @@ def validate_category_payload(data):
     """Validate category payload."""
     name = data.get("name", "").strip()
     cat_type = data.get("type", "").strip().lower()
-    
+
     if not name:
-        raise ValueError("Category name is required")
+        raise ValueError("نام دسته‌بندی الزامی است")
     if cat_type not in ("income", "cost"):
-        raise ValueError("Category type must be 'income' or 'cost'")
-    
+        raise ValueError("نوع دسته‌بندی باید 'income' یا 'cost' باشد")
+
     return {"name": name, "type": cat_type}
 
 
 def validate_source_payload(data):
-    """Validate source payload."""
-    name = data.get("name", "").strip()
-    amount = data.get("amount")
-    
+    """Validate source payload (backward compat alias for wallet)."""
+    return validate_wallet_payload(data)
+
+
+def validate_wallet_payload(data):
+    """Validate wallet payload."""
+    name = (data.get("name") or "").strip()
+    currency = (data.get("currency") or "IRR").strip().upper()
+    wallet_type = (data.get("wallet_type") or "personal").strip().lower()
+    variant = data.get("variant")
+
     if not name:
-        raise ValueError("Source name is required")
-    try:
-        amount = float(amount)
-        if amount < 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        raise ValueError("Valid non-negative amount is required")
-    
-    return {"name": name, "amount": amount}
+        raise ValueError("نام کیف پول الزامی است")
+
+    supported_currencies = ("IRR", "USD", "EUR", "GBP", "AED")
+    if currency not in supported_currencies:
+        raise ValueError(f"ارز '{currency}' پشتیبانی نمی‌شود")
+
+    if wallet_type not in ("personal", "shared"):
+        raise ValueError("نوع کیف پول باید personal یا shared باشد")
+
+    valid_variants = ("family", "team", "travel", "business", "savings")
+    if variant is not None and variant not in valid_variants:
+        raise ValueError(f"نوع کیف پول باید یکی از {', '.join(valid_variants)} باشد")
+
+    return {"name": name, "currency": currency, "wallet_type": wallet_type, "variant": variant}
 
 
 def validate_transaction_payload(data):
@@ -59,11 +71,12 @@ def validate_transaction_payload(data):
     date = data.get("date", "").strip()
     amount = data.get("amount")
     category_id = data.get("category_id")
-    source_id = data.get("source_id")
+    # Accept both source_id (legacy) and wallet_id
+    wallet_id = data.get("wallet_id") or data.get("source_id")
     description = data.get("description", "").strip()
-    
+
     if not date:
-        raise ValueError("Date is required")
+        raise ValueError("تاریخ الزامی است")
 
     gregorian_date = jalali_to_gregorian(date)
 
@@ -72,23 +85,23 @@ def validate_transaction_payload(data):
         if amount <= 0:
             raise ValueError
     except (TypeError, ValueError):
-        raise ValueError("Valid positive amount is required")
+        raise ValueError("مبلغ معتبر و مثبت الزامی است")
     try:
         category_id = int(category_id)
     except (TypeError, ValueError):
-        raise ValueError("Valid category_id is required")
+        raise ValueError("شناسه دسته‌بندی معتبر الزامی است")
 
-    if source_id is not None:
+    if wallet_id is not None:
         try:
-            source_id = int(source_id)
+            wallet_id = int(wallet_id)
         except (TypeError, ValueError):
-            raise ValueError("source_id must be an integer")
-    
+            raise ValueError("شناسه کیف پول باید عدد صحیح باشد")
+
     return {
         "date": gregorian_date,
         "amount": amount,
         "category_id": category_id,
-        "source_id": source_id,
+        "wallet_id": wallet_id,
         "description": description
     }
 
@@ -97,21 +110,21 @@ def validate_budget_period_payload(data):
     """Validate budget period payload."""
     year = data.get("year")
     month = data.get("month")
-    
+
     try:
         year = int(year)
         if year < 1300 or year > 1500:
             raise ValueError
     except (TypeError, ValueError):
-        raise ValueError("Valid year (1300-1500) is required")
-    
+        raise ValueError("سال معتبر (۱۳۰۰-۱۵۰۰) الزامی است")
+
     try:
         month = int(month)
         if not 1 <= month <= 12:
             raise ValueError
     except (TypeError, ValueError):
-        raise ValueError("Valid month (1-12) is required")
-    
+        raise ValueError("ماه معتبر (۱-۱۲) الزامی است")
+
     return {"year": year, "month": month}
 
 
@@ -121,24 +134,24 @@ def validate_budget_item_payload(data):
         data = {}
 
     if not isinstance(data, dict):
-        raise ValueError("Invalid payload")
+        raise ValueError("داده نامعتبر است")
 
     category_id = data.get("category_id")
     planned_amount = data.get("planned_amount")
     notes = (data.get("notes", "") or "").strip() or None
-    
+
     try:
         category_id = int(category_id)
     except (TypeError, ValueError):
-        raise ValueError("Valid category_id is required")
-    
+        raise ValueError("شناسه دسته‌بندی معتبر الزامی است")
+
     try:
         planned_amount = float(planned_amount)
         if planned_amount < 0:
             raise ValueError
     except (TypeError, ValueError):
-        raise ValueError("Valid non-negative planned_amount is required")
-    
+        raise ValueError("مبلغ برنامه‌ریزی شده معتبر و غیرمنفی الزامی است")
+
     return {
         "category_id": category_id,
         "planned_amount": planned_amount,
@@ -150,7 +163,7 @@ def validate_installment_plan_payload(data):
     if data is None:
         data = {}
     if not isinstance(data, dict):
-        raise ValueError("Invalid payload")
+        raise ValueError("داده نامعتبر است")
 
     title = (data.get("title") or "").strip()
     total_amount = data.get("total_amount")
@@ -159,28 +172,28 @@ def validate_installment_plan_payload(data):
     start_date = (data.get("start_date") or "").strip()
     due_day_of_month = data.get("due_day_of_month")
     category_id = data.get("category_id")
-    source_id = data.get("source_id")
+    wallet_id = data.get("wallet_id") or data.get("source_id")
     status = (data.get("status") or "active").strip().lower()
 
     if not title:
-        raise ValueError("title is required")
+        raise ValueError("عنوان الزامی است")
 
     try:
         total_amount = float(total_amount)
         if total_amount <= 0:
             raise ValueError
     except (TypeError, ValueError):
-        raise ValueError("Valid positive total_amount is required")
+        raise ValueError("مبلغ کل معتبر و مثبت الزامی است")
 
     try:
         installment_count = int(installment_count)
         if installment_count <= 0:
             raise ValueError
     except (TypeError, ValueError):
-        raise ValueError("installment_count must be greater than zero")
+        raise ValueError("تعداد اقساط باید بزرگتر از صفر باشد")
 
     if not start_date:
-        raise ValueError("start_date is required")
+        raise ValueError("تاریخ شروع الزامی است")
 
     if due_day_of_month is None or due_day_of_month == "":
         due_day_of_month = int(start_date.split("-")[2]) if isinstance(start_date, str) else None
@@ -190,22 +203,22 @@ def validate_installment_plan_payload(data):
             if not 1 <= due_day_of_month <= 31:
                 raise ValueError
         except (TypeError, ValueError):
-            raise ValueError("due_day_of_month must be an integer between 1 and 31")
+            raise ValueError("روز سررسید باید عدد صحیح بین ۱ تا ۳۱ باشد")
 
     try:
         category_id = int(category_id)
         if category_id <= 0:
             raise ValueError
     except (TypeError, ValueError):
-        raise ValueError("Valid category_id is required")
+        raise ValueError("شناسه دسته‌بندی معتبر الزامی است")
 
-    if source_id is not None:
+    if wallet_id is not None:
         try:
-            source_id = int(source_id)
-            if source_id <= 0:
+            wallet_id = int(wallet_id)
+            if wallet_id <= 0:
                 raise ValueError
         except (TypeError, ValueError):
-            raise ValueError("source_id must be a positive integer")
+            raise ValueError("شناسه کیف پول باید عدد صحیح مثبت باشد")
 
     if installment_amount is not None:
         try:
@@ -213,10 +226,10 @@ def validate_installment_plan_payload(data):
             if installment_amount <= 0:
                 raise ValueError
         except (TypeError, ValueError):
-            raise ValueError("installment_amount must be greater than zero")
+            raise ValueError("مبلغ قسط باید بزرگتر از صفر باشد")
 
     if status not in ("active", "completed", "canceled"):
-        raise ValueError("status must be active, completed, or canceled")
+        raise ValueError("وضعیت باید فعال، تکمیل شده یا لغو شده باشد")
 
     return {
         "title": title,
@@ -226,7 +239,7 @@ def validate_installment_plan_payload(data):
         "start_date": start_date,
         "due_day_of_month": due_day_of_month,
         "category_id": category_id,
-        "source_id": source_id,
+        "wallet_id": wallet_id,
         "status": status,
     }
 
@@ -235,27 +248,27 @@ def validate_installment_payment_payload(data):
     if data is None:
         data = {}
     if not isinstance(data, dict):
-        raise ValueError("Invalid payload")
+        raise ValueError("داده نامعتبر است")
 
     installment_ids = data.get("installment_ids")
     paid_date = (data.get("paid_date") or "").strip()
 
     if installment_ids is None:
-        raise ValueError("installment_ids is required")
+        raise ValueError("شناسه اقساط الزامی است")
     if isinstance(installment_ids, int):
         installment_ids = [installment_ids]
     if not isinstance(installment_ids, list) or len(installment_ids) == 0:
-        raise ValueError("installment_ids must be a non-empty integer list")
+        raise ValueError("شناسه اقساط باید لیست غیرخالی از اعداد صحیح باشد")
     cleaned_ids = []
     for item in installment_ids:
         if item is None:
-            raise ValueError("installment_ids must contain integers")
+            raise ValueError("شناسه اقساط باید شامل اعداد صحیح باشد")
         try:
             item_id = int(item)
         except (TypeError, ValueError):
-            raise ValueError("installment_ids must contain integers")
+            raise ValueError("شناسه اقساط باید شامل اعداد صحیح باشد")
         if item_id <= 0:
-            raise ValueError("installment_ids must contain positive integers")
+            raise ValueError("شناسه اقساط باید شامل اعداد صحیح مثبت باشد")
         cleaned_ids.append(item_id)
 
     if paid_date:
@@ -270,11 +283,11 @@ def validate_check_payload(data):
     if data is None:
         data = {}
     if not isinstance(data, dict):
-        raise ValueError("Invalid payload")
+        raise ValueError("داده نامعتبر است")
 
     check_type = (data.get("type") or "").strip().lower()
     if check_type not in ("issued", "received"):
-        raise ValueError("type must be 'issued' or 'received'")
+        raise ValueError("نوع باید 'issued' یا 'received' باشد")
 
     check_number = (data.get("check_number") or "").strip() or None
     bank_name = (data.get("bank_name") or "").strip() or None
@@ -282,13 +295,13 @@ def validate_check_payload(data):
     issue_date = (data.get("issue_date") or "").strip()
     due_date = (data.get("due_date") or "").strip()
     category_id = data.get("category_id")
-    source_id = data.get("source_id")
+    wallet_id = data.get("wallet_id") or data.get("source_id")
     description = (data.get("description") or "").strip() or None
 
     if not issue_date:
-        raise ValueError("issue_date is required")
+        raise ValueError("تاریخ صدور الزامی است")
     if not due_date:
-        raise ValueError("due_date is required")
+        raise ValueError("تاریخ سررسید الزامی است")
 
     issue_date = jalali_to_gregorian(issue_date)
     due_date = jalali_to_gregorian(due_date)
@@ -298,25 +311,25 @@ def validate_check_payload(data):
         if amount <= 0:
             raise ValueError
     except (TypeError, ValueError):
-        raise ValueError("Valid positive amount is required")
+        raise ValueError("مبلغ معتبر و مثبت الزامی است")
 
     try:
         category_id = int(category_id)
         if category_id <= 0:
             raise ValueError
     except (TypeError, ValueError):
-        raise ValueError("Valid category_id is required")
+        raise ValueError("شناسه دسته‌بندی معتبر الزامی است")
 
-    if source_id is not None:
+    if wallet_id is not None:
         try:
-            source_id = int(source_id)
-            if source_id <= 0:
+            wallet_id = int(wallet_id)
+            if wallet_id <= 0:
                 raise ValueError
         except (TypeError, ValueError):
-            raise ValueError("source_id must be a positive integer")
+            raise ValueError("شناسه کیف پول باید عدد صحیح مثبت باشد")
 
     if due_date < issue_date:
-        raise ValueError("due_date cannot be earlier than issue_date")
+        raise ValueError("تاریخ سررسید نمی‌تواند قبل از تاریخ صدور باشد")
 
     return {
         "check_number": check_number,
@@ -325,7 +338,7 @@ def validate_check_payload(data):
         "issue_date": issue_date,
         "due_date": due_date,
         "type": check_type,
-        "source_id": source_id,
+        "wallet_id": wallet_id,
         "category_id": category_id,
         "description": description,
     }
@@ -334,11 +347,11 @@ def validate_check_payload(data):
 def validate_transaction_item_payload(data):
     """Validate a single transaction item payload."""
     if data is None or not isinstance(data, dict):
-        raise ValueError("Invalid item payload")
+        raise ValueError("داده قلم نامعتبر است")
 
     name = (data.get("name") or "").strip()
     if not name:
-        raise ValueError("Item name is required")
+        raise ValueError("نام قلم الزامی است")
 
     quantity = data.get("quantity")
     if quantity is None:
@@ -348,7 +361,7 @@ def validate_transaction_item_payload(data):
         if quantity <= 0:
             raise ValueError
     except (TypeError, ValueError):
-        raise ValueError("Quantity must be a positive number")
+        raise ValueError("تعداد باید عدد مثبت باشد")
 
     unit = (data.get("unit") or "").strip() or None
 
@@ -358,7 +371,7 @@ def validate_transaction_item_payload(data):
         if total_price < 0:
             raise ValueError
     except (TypeError, ValueError):
-        raise ValueError("Valid non-negative total_price is required")
+        raise ValueError("قیمت کل معتبر و غیرمنفی الزامی است")
 
     unit_price = data.get("unit_price")
     if unit_price is not None:
@@ -367,7 +380,7 @@ def validate_transaction_item_payload(data):
             if unit_price < 0:
                 raise ValueError
         except (TypeError, ValueError):
-            raise ValueError("unit_price must be a non-negative number")
+            raise ValueError("قیمت واحد باید عدد غیرمنفی باشد")
     else:
         unit_price = round(total_price / quantity, 2) if quantity > 0 else total_price
 
@@ -388,38 +401,38 @@ def validate_transaction_items_payload(items_data):
     if items_data is None:
         return []
     if not isinstance(items_data, list):
-        raise ValueError("items must be a list")
+        raise ValueError("اقلام باید لیست باشد")
 
     validated = []
     for i, item in enumerate(items_data):
         try:
             validated.append(validate_transaction_item_payload(item))
         except ValueError as exc:
-            raise ValueError(f"Item {i + 1}: {exc}")
+            raise ValueError(f"قلم {i + 1}: {exc}")
     return validated
 
 
 def validate_debt_payload(data):
     """Validate a debt/receivable creation payload."""
     if data is None or not isinstance(data, dict):
-        raise ValueError("Invalid payload")
+        raise ValueError("داده نامعتبر است")
 
     debt_type = (data.get("type") or "").strip().lower()
     if debt_type not in ("receivable", "payable"):
-        raise ValueError("type must be 'receivable' or 'payable'")
+        raise ValueError("نوع باید 'receivable' یا 'payable' باشد")
 
     counterparty_name = (data.get("counterparty_name") or "").strip()
     if not counterparty_name:
-        raise ValueError("counterparty_name is required")
+        raise ValueError("نام طرف حساب الزامی است")
 
     counterparty_type = (data.get("counterparty_type") or "person").strip().lower()
     valid_types = ("person", "company", "bank", "merchant", "family", "friend", "other")
     if counterparty_type not in valid_types:
-        raise ValueError(f"counterparty_type must be one of: {', '.join(valid_types)}")
+        raise ValueError(f"نوع طرف حساب باید یکی از موارد زیر باشد: {', '.join(valid_types)}")
 
     title = (data.get("title") or "").strip()
     if not title:
-        raise ValueError("title is required")
+        raise ValueError("عنوان الزامی است")
 
     description = (data.get("description") or "").strip() or None
 
@@ -428,31 +441,31 @@ def validate_debt_payload(data):
         if original_amount <= 0:
             raise ValueError
     except (TypeError, ValueError):
-        raise ValueError("original_amount must be a positive number")
+        raise ValueError("مبلغ اولیه باید عدد مثبت باشد")
 
     issue_date = (data.get("issue_date") or "").strip()
     if not issue_date:
-        raise ValueError("issue_date is required")
+        raise ValueError("تاریخ صدور الزامی است")
     issue_date = jalali_to_gregorian(issue_date)
 
     due_date = (data.get("due_date") or "").strip() or None
     if due_date:
         due_date = jalali_to_gregorian(due_date)
         if due_date < issue_date:
-            raise ValueError("due_date cannot be before issue_date")
+            raise ValueError("تاریخ سررسید نمی‌تواند قبل از تاریخ صدور باشد")
 
     priority = (data.get("priority") or "normal").strip().lower()
     if priority not in ("low", "normal", "high", "urgent"):
-        raise ValueError("priority must be low, normal, high, or urgent")
+        raise ValueError("اولویت باید کم، عادی، زیاد یا فوری باشد")
 
-    source_id = data.get("source_id")
-    if source_id is not None:
+    wallet_id = data.get("wallet_id") or data.get("source_id")
+    if wallet_id is not None:
         try:
-            source_id = int(source_id)
-            if source_id <= 0:
+            wallet_id = int(wallet_id)
+            if wallet_id <= 0:
                 raise ValueError
         except (TypeError, ValueError):
-            raise ValueError("source_id must be a positive integer")
+            raise ValueError("شناسه کیف پول باید عدد صحیح مثبت باشد")
 
     reference_type = (data.get("reference_type") or "").strip() or None
     reference_id = data.get("reference_id")
@@ -460,7 +473,7 @@ def validate_debt_payload(data):
         try:
             reference_id = int(reference_id)
         except (TypeError, ValueError):
-            raise ValueError("reference_id must be an integer")
+            raise ValueError("شناسه مرجع باید عدد صحیح باشد")
 
     has_interest = bool(data.get("has_interest", False))
     interest_type = (data.get("interest_type") or "").strip() or None
@@ -468,13 +481,13 @@ def validate_debt_payload(data):
 
     if has_interest:
         if interest_type not in ("simple", "compound", "fixed"):
-            raise ValueError("interest_type must be simple, compound, or fixed")
+            raise ValueError("نوع سود باید ساده، مرکب یا ثابت باشد")
         try:
             interest_rate = float(interest_rate)
             if interest_rate < 0:
                 raise ValueError
         except (TypeError, ValueError):
-            raise ValueError("interest_rate must be a non-negative number")
+            raise ValueError("نرخ سود باید عدد غیرمنفی باشد")
     else:
         interest_type = None
         interest_rate = None
@@ -489,7 +502,7 @@ def validate_debt_payload(data):
         "issue_date": issue_date,
         "due_date": due_date,
         "priority": priority,
-        "source_id": source_id,
+        "wallet_id": wallet_id,
         "reference_type": reference_type,
         "reference_id": reference_id,
         "has_interest": has_interest,
@@ -501,30 +514,30 @@ def validate_debt_payload(data):
 def validate_debt_payment_payload(data):
     """Validate a debt payment payload."""
     if data is None or not isinstance(data, dict):
-        raise ValueError("Invalid payload")
+        raise ValueError("داده نامعتبر است")
 
     try:
         amount = float(data.get("amount"))
         if amount <= 0:
             raise ValueError
     except (TypeError, ValueError):
-        raise ValueError("amount must be a positive number")
+        raise ValueError("مبلغ باید عدد مثبت باشد")
 
     payment_date = (data.get("payment_date") or "").strip()
     if not payment_date:
-        raise ValueError("payment_date is required")
+        raise ValueError("تاریخ پرداخت الزامی است")
     payment_date = jalali_to_gregorian(payment_date)
 
     payment_method = (data.get("payment_method") or "cash").strip().lower()
 
-    source_id = data.get("source_id")
-    if source_id is not None:
+    wallet_id = data.get("wallet_id") or data.get("source_id")
+    if wallet_id is not None:
         try:
-            source_id = int(source_id)
-            if source_id <= 0:
+            wallet_id = int(wallet_id)
+            if wallet_id <= 0:
                 raise ValueError
         except (TypeError, ValueError):
-            raise ValueError("source_id must be a positive integer")
+            raise ValueError("شناسه کیف پول باید عدد صحیح مثبت باشد")
 
     note = (data.get("note") or "").strip() or None
 
@@ -532,6 +545,6 @@ def validate_debt_payment_payload(data):
         "amount": amount,
         "payment_date": payment_date,
         "payment_method": payment_method,
-        "source_id": source_id,
+        "wallet_id": wallet_id,
         "note": note,
     }

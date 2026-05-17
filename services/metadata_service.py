@@ -1,5 +1,6 @@
 """Contact, Tag, and Label management services."""
 
+import math
 from database import get_connection, release_connection
 
 
@@ -64,7 +65,7 @@ class ContactService:
             )
             existing = cursor.fetchone()
             if not existing:
-                return None, "Contact not found"
+                return None, "مخاطب یافت نشد"
 
             cursor.execute(
                 """
@@ -116,18 +117,33 @@ class ContactService:
             release_connection(conn)
 
     @staticmethod
-    def list_contacts(user_id, search=None):
+    def list_contacts(user_id, search=None, page=1, per_page=20):
         conn = get_connection()
         cursor = conn.cursor()
         try:
-            query = "SELECT * FROM contacts WHERE user_id = %s AND deleted_at IS NULL"
+            where_clause = " WHERE user_id = %s AND deleted_at IS NULL"
             params = [user_id]
             if search:
-                query += " AND name ILIKE %s"
+                where_clause += " AND name ILIKE %s"
                 params.append(f"%{search}%")
-            query += " ORDER BY name"
-            cursor.execute(query, params)
-            return [dict(r) for r in cursor.fetchall()]
+
+            count_sql = "SELECT COUNT(*) as total FROM contacts" + where_clause
+            cursor.execute(count_sql, params)
+            total = cursor.fetchone()["total"]
+
+            data_sql = "SELECT * FROM contacts" + where_clause + " ORDER BY name"
+            offset = (page - 1) * per_page
+            cursor.execute(data_sql + " LIMIT %s OFFSET %s", params + [per_page, offset])
+            rows = cursor.fetchall()
+
+            total_pages = math.ceil(total / per_page) if per_page > 0 else 0
+            return {
+                "items": [dict(r) for r in rows],
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": total_pages,
+            }
         finally:
             cursor.close()
             release_connection(conn)
@@ -188,7 +204,7 @@ class TagService:
                         return dict(cursor2.fetchone()), None
                 finally:
                     cursor2.close()
-                return None, "Tag already exists"
+                return None, "برچسب قبلاً وجود دارد"
             return None, str(exc)
         finally:
             cursor.close()
@@ -205,7 +221,7 @@ class TagService:
             )
             existing = cursor.fetchone()
             if not existing:
-                return None, "Tag not found"
+                return None, "برچسب یافت نشد"
 
             cursor.execute(
                 """
@@ -222,7 +238,7 @@ class TagService:
         except Exception as exc:
             conn.rollback()
             if "unique" in str(exc).lower():
-                return None, "Tag name already exists"
+                return None, "نام برچسب قبلاً وجود دارد"
             return None, str(exc)
         finally:
             cursor.close()
@@ -253,26 +269,40 @@ class TagService:
             release_connection(conn)
 
     @staticmethod
-    def list_tags(user_id):
+    def list_tags(user_id, page=1, per_page=20):
         conn = get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute(
-                """
-                SELECT t.*,
-                       COALESCE(tc.tx_count, 0)::int AS usage_count
-                FROM tags t
-                LEFT JOIN (
-                    SELECT tag_id, COUNT(*) AS tx_count
-                    FROM transaction_tags
-                    GROUP BY tag_id
-                ) tc ON t.id = tc.tag_id
-                WHERE t.user_id = %s AND t.deleted_at IS NULL
-                ORDER BY t.name
-                """,
-                (user_id,),
+            where_clause = " WHERE t.user_id = %s AND t.deleted_at IS NULL"
+            params = [user_id]
+
+            join_clause = (
+                " FROM tags t"
+                " LEFT JOIN ("
+                "   SELECT tag_id, COUNT(*) AS tx_count FROM transaction_tags GROUP BY tag_id"
+                " ) tc ON t.id = tc.tag_id"
             )
-            return [dict(r) for r in cursor.fetchall()]
+
+            count_sql = "SELECT COUNT(*) as total" + join_clause + where_clause
+            cursor.execute(count_sql, params)
+            total = cursor.fetchone()["total"]
+
+            data_sql = (
+                "SELECT t.*, COALESCE(tc.tx_count, 0)::int AS usage_count"
+                + join_clause + where_clause + " ORDER BY t.name"
+            )
+            offset = (page - 1) * per_page
+            cursor.execute(data_sql + " LIMIT %s OFFSET %s", params + [per_page, offset])
+            rows = cursor.fetchall()
+
+            total_pages = math.ceil(total / per_page) if per_page > 0 else 0
+            return {
+                "items": [dict(r) for r in rows],
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": total_pages,
+            }
         finally:
             cursor.close()
             release_connection(conn)
@@ -375,7 +405,7 @@ class LabelService:
                         return dict(cursor2.fetchone()), None
                 finally:
                     cursor2.close()
-                return None, "Label already exists"
+                return None, "برچسب رنگی قبلاً وجود دارد"
             return None, str(exc)
         finally:
             cursor.close()
@@ -392,7 +422,7 @@ class LabelService:
             )
             existing = cursor.fetchone()
             if not existing:
-                return None, "Label not found"
+                return None, "برچسب رنگی یافت نشد"
 
             cursor.execute(
                 """
@@ -409,7 +439,7 @@ class LabelService:
         except Exception as exc:
             conn.rollback()
             if "unique" in str(exc).lower():
-                return None, "Label name already exists"
+                return None, "نام برچسب رنگی قبلاً وجود دارد"
             return None, str(exc)
         finally:
             cursor.close()
@@ -440,30 +470,44 @@ class LabelService:
             release_connection(conn)
 
     @staticmethod
-    def list_labels(user_id):
+    def list_labels(user_id, page=1, per_page=20):
         conn = get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute(
-                """
-                SELECT l.*,
-                       COALESCE(tlc.tx_count, 0)::int AS transaction_count,
-                       COALESCE(slc.src_count, 0)::int AS source_count
-                FROM labels l
-                LEFT JOIN (
-                    SELECT label_id, COUNT(*) AS tx_count
-                    FROM transaction_labels GROUP BY label_id
-                ) tlc ON l.id = tlc.label_id
-                LEFT JOIN (
-                    SELECT label_id, COUNT(*) AS src_count
-                    FROM source_labels GROUP BY label_id
-                ) slc ON l.id = slc.label_id
-                WHERE l.user_id = %s AND l.deleted_at IS NULL
-                ORDER BY l.name
-                """,
-                (user_id,),
+            where_clause = " WHERE l.user_id = %s AND l.deleted_at IS NULL"
+            params = [user_id]
+
+            join_clause = (
+                " FROM labels l"
+                " LEFT JOIN ("
+                "   SELECT label_id, COUNT(*) AS tx_count FROM transaction_labels GROUP BY label_id"
+                " ) tlc ON l.id = tlc.label_id"
+                " LEFT JOIN ("
+                "   SELECT label_id, COUNT(*) AS src_count FROM wallet_labels GROUP BY label_id"
+                " ) slc ON l.id = slc.label_id"
             )
-            return [dict(r) for r in cursor.fetchall()]
+
+            count_sql = "SELECT COUNT(*) as total" + join_clause + where_clause
+            cursor.execute(count_sql, params)
+            total = cursor.fetchone()["total"]
+
+            data_sql = (
+                "SELECT l.*, COALESCE(tlc.tx_count, 0)::int AS transaction_count,"
+                " COALESCE(slc.src_count, 0)::int AS wallet_count"
+                + join_clause + where_clause + " ORDER BY l.name"
+            )
+            offset = (page - 1) * per_page
+            cursor.execute(data_sql + " LIMIT %s OFFSET %s", params + [per_page, offset])
+            rows = cursor.fetchall()
+
+            total_pages = math.ceil(total / per_page) if per_page > 0 else 0
+            return {
+                "items": [dict(r) for r in rows],
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": total_pages,
+            }
         finally:
             cursor.close()
             release_connection(conn)
@@ -508,19 +552,19 @@ class LabelService:
             release_connection(conn)
 
     @staticmethod
-    def set_source_labels(source_id, label_ids):
-        """Replace all labels on a source."""
+    def set_wallet_labels(wallet_id, label_ids):
+        """Replace all labels on a wallet."""
         conn = get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "DELETE FROM source_labels WHERE source_id = %s",
-                (source_id,),
+                "DELETE FROM wallet_labels WHERE wallet_id = %s",
+                (wallet_id,),
             )
             for label_id in label_ids:
                 cursor.execute(
-                    "INSERT INTO source_labels (source_id, label_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                    (source_id, label_id),
+                    "INSERT INTO wallet_labels (wallet_id, label_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (wallet_id, label_id),
                 )
             conn.commit()
             return True, None
@@ -552,7 +596,7 @@ class LabelService:
             release_connection(conn)
 
     @staticmethod
-    def get_source_labels(source_id):
+    def get_wallet_labels(wallet_id):
         conn = get_connection()
         cursor = conn.cursor()
         try:
@@ -560,11 +604,11 @@ class LabelService:
                 """
                 SELECT l.id, l.name, l.color
                 FROM labels l
-                JOIN source_labels sl ON l.id = sl.label_id
-                WHERE sl.source_id = %s AND l.deleted_at IS NULL
+                JOIN wallet_labels sl ON l.id = sl.label_id
+                WHERE sl.wallet_id = %s AND l.deleted_at IS NULL
                 ORDER BY l.name
                 """,
-                (source_id,),
+                (wallet_id,),
             )
             return [dict(r) for r in cursor.fetchall()]
         finally:

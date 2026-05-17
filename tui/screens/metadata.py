@@ -423,7 +423,7 @@ class LabelListScreen(Screen):
 
     def on_mount(self) -> None:
         table = self.query_one("#label_table", DataTable)
-        table.add_columns("ID", "Name", "Color", "Transactions", "Sources")
+        table.add_columns("ID", "Name", "Color", "Transactions", "Wallets")
         table.cursor_type = "row"
         table.zebra_stripes = True
         self._data = []
@@ -447,7 +447,7 @@ class LabelListScreen(Screen):
                     lb.get("name", ""),
                     lb.get("color") or "-",
                     str(lb.get("transaction_count", 0)),
-                    str(lb.get("source_count", 0)),
+                    str(lb.get("wallet_count", 0)),
                 )
 
     def _get_selected_id(self):

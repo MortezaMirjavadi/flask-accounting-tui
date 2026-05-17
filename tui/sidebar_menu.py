@@ -63,7 +63,7 @@ def create_accounting_menu() -> MenuItem:
         children=[
             MenuItem(
                 id="dashboard", label="Dashboard", icon="📊",
-                description="Overview — sources and today's transactions",
+                description="Overview — wallets and today's transactions",
                 screen_module="tui.screens.base", screen_class="DashboardScreen",
             ),
             MenuItem(
@@ -83,15 +83,15 @@ def create_accounting_menu() -> MenuItem:
                                           description="Add a new transaction",
                                           screen_module="tui.screens.transactions", screen_class="TransactionAddScreen"),
                              ]),
-                    MenuItem(id="sources", label="Sources", icon="🏦",
-                             description="Manage financial sources",
+                    MenuItem(id="wallets", label="Wallets", icon="🏦",
+                             description="Manage wallets",
                              children=[
-                                 MenuItem(id="src-list", label="List Sources", icon="📋",
-                                          description="View all sources",
-                                          screen_module="tui.screens.sources", screen_class="SourceListScreen"),
-                                 MenuItem(id="src-add", label="Add Source", icon="➕",
-                                          description="Add a new source",
-                                          screen_module="tui.screens.sources", screen_class="SourceAddScreen"),
+                                 MenuItem(id="wlt-list", label="List Wallets", icon="📋",
+                                          description="View all wallets",
+                                          screen_module="tui.screens.wallets", screen_class="WalletListScreen"),
+                                 MenuItem(id="wlt-add", label="Add Wallet", icon="➕",
+                                          description="Add a new wallet",
+                                          screen_module="tui.screens.wallets", screen_class="WalletAddScreen"),
                              ]),
                     MenuItem(id="categories", label="Categories", icon="📁",
                              description="Manage transaction categories",
@@ -130,7 +130,7 @@ def create_accounting_menu() -> MenuItem:
                                           screen_module="tui.screens.metadata", screen_class="TagFormScreen"),
                              ]),
                     MenuItem(id="labels", label="Labels", icon="🏷️",
-                             description="Manage labels for transactions and sources",
+                             description="Manage labels for transactions and wallets",
                              children=[
                                  MenuItem(id="label-list", label="List Labels", icon="📋",
                                           description="View all labels",

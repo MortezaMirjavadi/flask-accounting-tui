@@ -10,6 +10,15 @@ from database import get_connection, release_connection
 from app.services import reporting_service
 from services.calendar_service import CalendarService
 
+# SQL fragment for checking transaction access via wallet ownership or membership.
+_TX_ACCESS_WHERE = (
+    "(t.wallet_id IS NULL AND t.user_id = %s) "
+    "OR t.wallet_id IN ("
+    "SELECT id FROM wallets WHERE user_id = %s AND deleted_at IS NULL "
+    "UNION "
+    "SELECT wallet_id FROM wallet_members WHERE user_id = %s)"
+)
+
 
 @dataclass
 class DailyTrend:
@@ -260,8 +269,8 @@ class ForecastService:
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT COALESCE(SUM(amount), 0) AS total FROM sources WHERE user_id = %s AND deleted_at IS NULL",
-                (user_id,),
+                f"SELECT COALESCE(SUM(amount), 0) AS total FROM wallets WHERE deleted_at IS NULL AND (user_id = %s OR id IN (SELECT wallet_id FROM wallet_members WHERE user_id = %s))",
+                (user_id, user_id),
             )
             row = cursor.fetchone()
             return float(row["total"] if row else 0.0)
@@ -366,17 +375,17 @@ class ForecastService:
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute(
-                """
+                f"""
                 SELECT t.date, t.amount, COALESCE(c.type, 'cost') AS category_type
                 FROM transactions t
                 JOIN categories c ON c.id = t.category_id
-                WHERE t.user_id = %s
+                WHERE ({_TX_ACCESS_WHERE})
                   AND t.deleted_at IS NULL
                   AND t.date >= %s
                   AND t.date <= %s
                 ORDER BY t.date ASC
                 """,
-                (user_id, _iso(start), _iso(end)),
+                (user_id, user_id, user_id, _iso(start), _iso(end)),
             )
             return [dict(row) for row in cursor.fetchall()]
         finally:

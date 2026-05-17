@@ -3,6 +3,7 @@ Flask>=2.0.0
 Werkzeug>=2.0.0
 psycopg2-binary>=2.9.0
 python-dotenv>=1.0.0
+flasgger>=0.9.7
 
 # TUI dependencies
 textual>=0.41.0

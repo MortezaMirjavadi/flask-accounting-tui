@@ -123,7 +123,7 @@ class BudgetService:
             )
             archived = cursor.fetchone()
             if archived is None:
-                return None, "Budget period already exists for this year/month"
+                return None, "دوره بودجه برای این سال/ماه قبلاً ثبت شده است"
             cursor.execute(
                 "UPDATE budget_periods SET deleted_at = NULL WHERE id = %s",
                 (archived["id"],),
@@ -145,7 +145,7 @@ class BudgetService:
         
         try:
             if BudgetService.get_period(cursor, period_id, user_id) is None:
-                return False, "Budget period not found"
+                return False, "دوره بودجه یافت نشد"
             
             cursor.execute(
                 "UPDATE budget_items SET deleted_at = CURRENT_TIMESTAMP WHERE budget_period_id = %s AND deleted_at IS NULL",

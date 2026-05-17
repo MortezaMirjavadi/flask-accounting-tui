@@ -7,6 +7,19 @@ bp = Blueprint('settings', __name__)
 
 @bp.route("/reset", methods=["POST"])
 def reset_all_data():
+    """Reset all user data by soft-deleting all records.
+    ---
+    tags:
+      - Settings
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+    responses:
+      200:
+        description: All data archived successfully
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -27,7 +40,7 @@ def reset_all_data():
         (user_id,),
     )
     cursor.execute("UPDATE budget_periods SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = %s AND deleted_at IS NULL", (user_id,))
-    cursor.execute("UPDATE sources SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = %s AND deleted_at IS NULL", (user_id,))
+    cursor.execute("UPDATE wallets SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = %s AND deleted_at IS NULL", (user_id,))
     cursor.execute("UPDATE categories SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = %s AND deleted_at IS NULL", (user_id,))
     
     conn.commit()

@@ -1,4 +1,4 @@
-"""Source management screens."""
+"""Wallet management screens."""
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -13,9 +13,9 @@ from tui.api import api_get, api_post, api_put, api_delete, handle_response, for
 from tui.widgets import ConfirmBox, HelpTip, MessageBox, StatusBar
 
 
-class SourcesScreen(Screen):
-    """Sources menu."""
-    
+class WalletsScreen(Screen):
+    """Wallets menu."""
+
     BINDINGS = [
         Binding("escape", "go_back", "Back"),
         Binding("1", "do_list", "List"),
@@ -26,11 +26,11 @@ class SourcesScreen(Screen):
         if not getattr(self, "_sidebar_embedded", False):
             yield Header()
         with Container(classes="main_panel center_screen"):
-            yield Label("SOURCES", classes="menu_header")
+            yield Label("WALLETS", classes="menu_header")
             yield Rule()
             yield ListView(
-                ListItem(Label("1. List Sources")),
-                ListItem(Label("2. Add Source")),
+                ListItem(Label("1. List Wallets")),
+                ListItem(Label("2. Add Wallet")),
                 ListItem(Label("3. Back to Main Menu")),
                 id="src_menu_list",
             )
@@ -53,15 +53,15 @@ class SourcesScreen(Screen):
         self.app.pop_screen()
 
     def action_do_list(self):
-        self.app.push_screen(SourceListScreen())
+        self.app.push_screen(WalletListScreen())
 
     def action_do_add(self):
-        self.app.push_screen(SourceAddScreen())
+        self.app.push_screen(WalletAddScreen())
 
 
-class SourceListScreen(Screen):
-    """Source list with filtering."""
-    
+class WalletListScreen(Screen):
+    """Wallet list with filtering."""
+
     BINDINGS = [
         Binding("escape", "go_back", "Back"),
         Binding("e", "edit_selected", "Edit"),
@@ -75,12 +75,10 @@ class SourceListScreen(Screen):
         if not getattr(self, "_sidebar_embedded", False):
             yield Header()
         with Container(classes="wide_panel center_screen"):
-            yield Label("SOURCE LIST", classes="menu_header")
+            yield Label("WALLET LIST", classes="menu_header")
             yield Rule()
             with Horizontal(classes="filter_row"):
                 yield Input(placeholder="Filter by name", id="src_filter_name")
-                yield Input(placeholder="Min amount", id="src_filter_min")
-                yield Input(placeholder="Max amount", id="src_filter_max")
                 yield Button("Filter", variant="primary", id="src_filter_btn")
                 yield Button("Reset", variant="default", id="src_reset_btn")
             with Horizontal(classes="split_row"):
@@ -98,7 +96,7 @@ class SourceListScreen(Screen):
 
     def on_mount(self) -> None:
         table = self.query_one("#src_table", DataTable)
-        table.add_columns("ID", "Name", "Amount")
+        table.add_columns("ID", "Name", "Currency", "Type")
         table.cursor_type = "row"
         table.zebra_stripes = True
         self.load_data()
@@ -106,16 +104,20 @@ class SourceListScreen(Screen):
     def load_data(self, params=None):
         table = self.query_one("#src_table", DataTable)
         table.clear()
-        resp = api_get("/sources", params=params, username=self.app.user.get("username"))
+        resp = api_get("/wallets", params=params, username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
         self._data = data or []
         if not self._data:
-            table.add_row("-", "No sources found", "-")
+            table.add_row("-", "No wallets found", "-", "-")
         else:
-            rows = [(str(s["id"]), s["name"], format_toman(s["amount"])) for s in self._data]
+            rows = [
+                (str(s["id"]), s["name"], s.get("currency", "IRR"),
+                 s.get("wallet_type", "personal"))
+                for s in self._data
+            ]
             table.add_rows(rows)
         self.update_detail()
 
@@ -127,27 +129,13 @@ class SourceListScreen(Screen):
 
     def action_apply_filter(self):
         name = self.query_one("#src_filter_name", Input).value.strip()
-        min_amt = self.query_one("#src_filter_min", Input).value.strip()
-        max_amt = self.query_one("#src_filter_max", Input).value.strip()
         params = {}
         if name:
             params["name"] = name
-        if min_amt:
-            try:
-                params["min_amount"] = float(min_amt)
-            except ValueError:
-                pass
-        if max_amt:
-            try:
-                params["max_amount"] = float(max_amt)
-            except ValueError:
-                pass
         self.load_data(params=params)
 
     def action_reset_filter(self):
         self.query_one("#src_filter_name", Input).value = ""
-        self.query_one("#src_filter_min", Input).value = ""
-        self.query_one("#src_filter_max", Input).value = ""
         self.load_data()
 
     def on_data_table_row_highlighted(self, event):
@@ -157,25 +145,27 @@ class SourceListScreen(Screen):
         detail = self.query_one("#src_detail", Static)
         src_id = self._get_selected_id()
         if src_id is None:
-            detail.update("Select a source to see details.")
+            detail.update("Select a wallet to see details.")
             return
         src = next((s for s in getattr(self, "_data", []) if s["id"] == src_id), None)
         if src is None:
-            detail.update("Select a source to see details.")
+            detail.update("Select a wallet to see details.")
             return
-        
+
         # Fetch balance
-        bal_resp = api_get(f"/sources/{src_id}/balance", username=self.app.user.get("username"))
+        bal_resp = api_get(f"/wallets/{src_id}/balance", username=self.app.user.get("username"))
         bal_data, bal_err = handle_response(bal_resp)
         if bal_err or bal_data is None:
             bal_info = "Balance: N/A"
         else:
             bal = bal_data.get("balance", 0)
             bal_info = f"Balance: {format_toman(bal)}"
-        
+
         detail.update(
             f"[b]ID:[/b]        {src['id']}\n"
             f"[b]Name:[/b]      {src['name']}\n"
+            f"[b]Currency:[/b]  {src.get('currency', 'IRR')}\n"
+            f"[b]Type:[/b]      {src.get('wallet_type', 'personal')}\n"
             f"[b]{bal_info}[/b]\n"
         )
 
@@ -211,57 +201,62 @@ class SourceListScreen(Screen):
     def action_edit_selected(self):
         src_id = self._get_selected_id()
         if src_id is None:
-            self.app.push_screen(MessageBox("No source selected.", "Info"))
+            self.app.push_screen(MessageBox("No wallet selected.", "Info"))
             return
-        
+
         def on_save():
             self.load_data()
-        
-        self.app.push_screen(SourceEditScreen(src_id, on_save=on_save))
+
+        self.app.push_screen(WalletEditScreen(src_id, on_save=on_save))
 
     def action_delete_selected(self):
         src_id = self._get_selected_id()
         if src_id is None:
-            self.app.push_screen(MessageBox("No source selected.", "Info"))
+            self.app.push_screen(MessageBox("No wallet selected.", "Info"))
             return
 
         def on_confirm(confirmed: bool):
             if not confirmed:
                 return
-            resp = api_delete(f"/sources/{src_id}", username=self.app.user.get("username"))
+            resp = api_delete(f"/wallets/{src_id}", username=self.app.user.get("username"))
             _, err = handle_response(resp)
             if err:
                 self.app.push_screen(MessageBox(err, "Error"))
             else:
                 self.load_data()
 
-        self.app.push_screen(ConfirmBox("Delete selected source?", "Confirm"), on_confirm)
+        self.app.push_screen(ConfirmBox("Delete selected wallet?", "Confirm"), on_confirm)
 
     def action_show_transfer_report(self):
         src_id = self._get_selected_id()
         if src_id is None:
-            self.app.push_screen(MessageBox("No source selected.", "Info"))
+            self.app.push_screen(MessageBox("No wallet selected.", "Info"))
             return
         src = next((item for item in getattr(self, "_data", []) if item["id"] == src_id), None)
-        src_name = src["name"] if src else "Source"
-        self.app.push_screen(SourceTransferReportScreen(src_id, src_name))
+        src_name = src["name"] if src else "Wallet"
+        self.app.push_screen(WalletTransferReportScreen(src_id, src_name))
 
 
-class SourceAddScreen(Screen):
-    """Add new source screen."""
-    
+class WalletAddScreen(Screen):
+    """Add new wallet screen."""
+
     BINDINGS = [Binding("escape", "go_back", "Back")]
+
+    CURRENCIES = ["IRR", "USD", "EUR", "GBP", "AED"]
+    WALLET_TYPES = ["personal", "shared"]
 
     def compose(self) -> ComposeResult:
         if not getattr(self, "_sidebar_embedded", False):
             yield Header()
         with Container(classes="main_panel center_screen"):
-            yield Label("ADD SOURCE", classes="menu_header")
+            yield Label("ADD WALLET", classes="menu_header")
             yield Rule()
             yield Label("Name:")
-            yield Input(placeholder="Source name (e.g. Bank, Cash)", id="src_name")
-            yield Label("Amount:")
-            yield Input(placeholder="Source amount", id="src_amount")
+            yield Input(placeholder="Wallet name", id="src_name")
+            yield Label("Currency:")
+            yield Input(placeholder="IRR", id="src_currency", value="IRR")
+            yield Label("Wallet Type (personal/shared):")
+            yield Input(placeholder="personal", id="src_wallet_type", value="personal")
             yield Static("")
             with Horizontal(classes="button_row"):
                 yield Button("Save", variant="primary", id="save")
@@ -283,37 +278,39 @@ class SourceAddScreen(Screen):
 
     def save(self):
         name = self.query_one("#src_name", Input).value.strip()
-        amount_str = self.query_one("#src_amount", Input).value.strip()
-        
+        currency = self.query_one("#src_currency", Input).value.strip().upper() or "IRR"
+        wallet_type = self.query_one("#src_wallet_type", Input).value.strip().lower() or "personal"
+
         if not name:
             self.app.push_screen(MessageBox("Name is required", "Validation"))
             return
-        if not amount_str:
-            self.app.push_screen(MessageBox("Amount is required", "Validation"))
+        if currency not in self.CURRENCIES:
+            self.app.push_screen(MessageBox(f"Currency must be one of: {', '.join(self.CURRENCIES)}", "Validation"))
             return
-        
-        try:
-            amount = float(amount_str)
-        except ValueError:
-            self.app.push_screen(MessageBox("Invalid amount", "Validation"))
+        if wallet_type not in self.WALLET_TYPES:
+            self.app.push_screen(MessageBox("Wallet type must be 'personal' or 'shared'", "Validation"))
             return
-        
-        payload = {"name": name, "amount": amount}
-        resp = api_post("/sources", payload, username=self.app.user.get("username"))
+
+        payload = {"name": name, "currency": currency, "wallet_type": wallet_type}
+        resp = api_post("/wallets", payload, username=self.app.user.get("username"))
         _, err = handle_response(resp)
-        
+
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
         else:
-            self.app.push_screen(MessageBox("Source added successfully.", "Success"))
+            self.app.push_screen(MessageBox("Wallet added successfully.", "Success"))
             self.query_one("#src_name", Input).value = ""
-            self.query_one("#src_amount", Input).value = ""
+            self.query_one("#src_currency", Input).value = "IRR"
+            self.query_one("#src_wallet_type", Input).value = "personal"
 
 
-class SourceEditScreen(Screen):
-    """Edit source screen."""
-    
+class WalletEditScreen(Screen):
+    """Edit wallet screen."""
+
     BINDINGS = [Binding("escape", "go_back", "Back")]
+
+    CURRENCIES = ["IRR", "USD", "EUR", "GBP", "AED"]
+    WALLET_TYPES = ["personal", "shared"]
 
     def __init__(self, src_id: int, on_save=None, **kwargs):
         self.src_id = src_id
@@ -324,12 +321,14 @@ class SourceEditScreen(Screen):
         if not getattr(self, "_sidebar_embedded", False):
             yield Header()
         with Container(classes="main_panel center_screen"):
-            yield Label("EDIT SOURCE", classes="menu_header")
+            yield Label("EDIT WALLET", classes="menu_header")
             yield Rule()
             yield Label("Name:")
-            yield Input(placeholder="Source name", id="src_name")
-            yield Label("Amount:")
-            yield Input(placeholder="10000", id="src_amount")
+            yield Input(placeholder="Wallet name", id="src_name")
+            yield Label("Currency:")
+            yield Input(placeholder="IRR", id="src_currency")
+            yield Label("Wallet Type (personal/shared):")
+            yield Input(placeholder="personal", id="src_wallet_type")
             yield Static("")
             with Horizontal(classes="button_row"):
                 yield Button("Save", variant="primary", id="save")
@@ -341,13 +340,14 @@ class SourceEditScreen(Screen):
             yield Footer()
 
     def on_mount(self) -> None:
-        resp = api_get(f"/sources/{self.src_id}", username=self.app.user.get("username"))
+        resp = api_get(f"/wallets/{self.src_id}", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
         self.query_one("#src_name", Input).value = data.get("name", "")
-        self.query_one("#src_amount", Input).value = str(data.get("amount", 0))
+        self.query_one("#src_currency", Input).value = data.get("currency", "IRR")
+        self.query_one("#src_wallet_type", Input).value = data.get("wallet_type", "personal")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
@@ -360,25 +360,23 @@ class SourceEditScreen(Screen):
 
     def save(self):
         name = self.query_one("#src_name", Input).value.strip()
-        amount_str = self.query_one("#src_amount", Input).value.strip()
-        
+        currency = self.query_one("#src_currency", Input).value.strip().upper() or "IRR"
+        wallet_type = self.query_one("#src_wallet_type", Input).value.strip().lower() or "personal"
+
         if not name:
             self.app.push_screen(MessageBox("Name is required", "Validation"))
             return
-        if not amount_str:
-            self.app.push_screen(MessageBox("Amount is required", "Validation"))
+        if currency not in self.CURRENCIES:
+            self.app.push_screen(MessageBox(f"Currency must be one of: {', '.join(self.CURRENCIES)}", "Validation"))
             return
-        
-        try:
-            amount = float(amount_str)
-        except ValueError:
-            self.app.push_screen(MessageBox("Invalid amount", "Validation"))
+        if wallet_type not in self.WALLET_TYPES:
+            self.app.push_screen(MessageBox("Wallet type must be 'personal' or 'shared'", "Validation"))
             return
-        
-        payload = {"name": name, "amount": amount}
-        resp = api_put(f"/sources/{self.src_id}", payload, username=self.app.user.get("username"))
+
+        payload = {"name": name, "currency": currency, "wallet_type": wallet_type}
+        resp = api_put(f"/wallets/{self.src_id}", payload, username=self.app.user.get("username"))
         _, err = handle_response(resp)
-        
+
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
         else:
@@ -387,8 +385,8 @@ class SourceEditScreen(Screen):
             self.app.pop_screen()
 
 
-class SourceTransferReportScreen(Screen):
-    """Transfer report for a single source."""
+class WalletTransferReportScreen(Screen):
+    """Transfer report for a single wallet."""
 
     BINDINGS = [Binding("escape", "go_back", "Back")]
 
@@ -408,7 +406,7 @@ class SourceTransferReportScreen(Screen):
             yield DataTable(id="src_transfer_table")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[↑/↓] Navigate  [Esc] Back", id="help")
-            yield StatusBar("Transfer in/out records for selected source", id="status")
+            yield StatusBar("Transfer in/out records for selected wallet", id="status")
         if not getattr(self, "_sidebar_embedded", False):
             yield Footer()
 
@@ -423,7 +421,7 @@ class SourceTransferReportScreen(Screen):
         table = self.query_one("#src_transfer_table", DataTable)
         summary = self.query_one("#src_transfer_summary", Static)
         table.clear()
-        resp = api_get(f"/sources/{self.src_id}/transfers", username=self.app.user.get("username"))
+        resp = api_get(f"/wallets/{self.src_id}/transfers", username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
@@ -444,9 +442,9 @@ class SourceTransferReportScreen(Screen):
         for record in records:
             direction = "IN" if record.get("direction") == "in" else "OUT"
             counterparty = (
-                record.get("from_source_name")
+                record.get("from_wallet_name")
                 if record.get("direction") == "in"
-                else record.get("to_source_name")
+                else record.get("to_wallet_name")
             ) or "-"
             table.add_row(
                 str(record["id"]),

@@ -14,6 +14,29 @@ def _to_float(value):
     return float(value) if value is not None else 0.0
 
 
+# SQL fragment for checking transaction access via wallet ownership or membership.
+# Each query that uses this needs 3 user_id params: (user_id, user_id, user_id).
+# Usage: WHERE {_TX_ACCESS_WHERE}
+_TX_ACCESS_WHERE = (
+    "(t.wallet_id IS NULL AND t.user_id = %s) "
+    "OR t.wallet_id IN ("
+    "SELECT id FROM wallets WHERE user_id = %s AND deleted_at IS NULL "
+    "UNION "
+    "SELECT wallet_id FROM wallet_members WHERE user_id = %s)"
+)
+
+# SQL fragment for transfer access. Each query needs 4 user_id params.
+# Usage: WHERE {_TRANSFER_ACCESS_WHERE}
+_TRANSFER_ACCESS_WHERE = (
+    "(from_wallet_id IN ("
+    "SELECT id FROM wallets WHERE user_id = %s AND deleted_at IS NULL "
+    "UNION SELECT wallet_id FROM wallet_members WHERE user_id = %s) "
+    "OR to_wallet_id IN ("
+    "SELECT id FROM wallets WHERE user_id = %s AND deleted_at IS NULL "
+    "UNION SELECT wallet_id FROM wallet_members WHERE user_id = %s))"
+)
+
+
 @dataclass
 class ReportTransaction:
     id: int
@@ -111,9 +134,9 @@ class MonthlyBudgetHealth:
 
 
 @dataclass
-class SourceHealth:
-    source_id: int
-    source_name: str
+class WalletHealth:
+    wallet_id: int
+    wallet_name: str
     starting_balance: float
     ending_balance: float
     balance_change: float
@@ -143,7 +166,7 @@ class MonthlyReport:
     summary: MonthlySummary
     category_breakdown: list[MonthlyCategoryBreakdown]
     budget_health: MonthlyBudgetHealth
-    source_health: list[SourceHealth]
+    wallet_health: list[WalletHealth]
     trend_analysis: TrendAnalysis
     spending_velocity: SpendingVelocity
     smart_insights: list[str] = field(default_factory=list)
@@ -161,12 +184,12 @@ class ReportingService:
             return ""
 
     @staticmethod
-    def get_daily_report(user_id: int, date: str) -> DailyReport:
+    def get_daily_report(user_id: int, date: str, wallet_id: int | None = None) -> DailyReport:
         greg_date = jalali_to_gregorian(date)
         conn = get_connection()
         cursor = conn.cursor()
         weekday_name = ReportingService._weekday_name_from_jalali_date(date)
-        records = ReportingService._fetch_transactions(cursor, user_id, greg_date, greg_date)
+        records = ReportingService._fetch_transactions(cursor, user_id, greg_date, greg_date, wallet_id=wallet_id)
         monthly_usage = ReportingService._get_month_budget_usage(cursor, user_id, date)
         previous_avg = ReportingService._get_previous_7_day_avg_expense(cursor, user_id, greg_date)
         cursor.close()
@@ -200,19 +223,19 @@ class ReportingService:
         )
 
     @staticmethod
-    def get_weekly_report(user_id: int, start_date: str) -> WeeklyReport:
+    def get_weekly_report(user_id: int, start_date: str, wallet_id: int | None = None) -> WeeklyReport:
         greg_start = datetime.strptime(jalali_to_gregorian(start_date), "%Y-%m-%d").date()
         greg_end = greg_start + timedelta(days=6)
         conn = get_connection()
         cursor = conn.cursor()
 
         records = ReportingService._fetch_transactions(
-            cursor, user_id, greg_start.strftime("%Y-%m-%d"), greg_end.strftime("%Y-%m-%d")
+            cursor, user_id, greg_start.strftime("%Y-%m-%d"), greg_end.strftime("%Y-%m-%d"), wallet_id=wallet_id
         )
         previous_start = greg_start - timedelta(days=7)
         previous_end = greg_start - timedelta(days=1)
         previous_records = ReportingService._fetch_transactions(
-            cursor, user_id, previous_start.strftime("%Y-%m-%d"), previous_end.strftime("%Y-%m-%d")
+            cursor, user_id, previous_start.strftime("%Y-%m-%d"), previous_end.strftime("%Y-%m-%d"), wallet_id=wallet_id
         )
         cursor.close()
         release_connection(conn)
@@ -243,17 +266,17 @@ class ReportingService:
         )
 
     @staticmethod
-    def get_monthly_report(user_id: int, year: int, month: int) -> MonthlyReport:
+    def get_monthly_report(user_id: int, year: int, month: int, wallet_id: int | None = None) -> MonthlyReport:
         month_start, month_end, total_days = ReportingService._jalali_month_range(year, month)
         prev_year, prev_month = (year - 1, 12) if month == 1 else (year, month - 1)
         prev_start, prev_end, _ = ReportingService._jalali_month_range(prev_year, prev_month)
 
         conn = get_connection()
         cursor = conn.cursor()
-        current_records = ReportingService._fetch_transactions(cursor, user_id, month_start, month_end)
-        previous_records = ReportingService._fetch_transactions(cursor, user_id, prev_start, prev_end)
+        current_records = ReportingService._fetch_transactions(cursor, user_id, month_start, month_end, wallet_id=wallet_id)
+        previous_records = ReportingService._fetch_transactions(cursor, user_id, prev_start, prev_end, wallet_id=wallet_id)
         budget_rows = ReportingService._fetch_budget_rows(cursor, user_id, year, month)
-        source_health = ReportingService._build_source_health(cursor, user_id, month_start, month_end)
+        wallet_health = ReportingService._build_wallet_health(cursor, user_id, month_start, month_end)
         cursor.close()
         release_connection(conn)
 
@@ -284,16 +307,21 @@ class ReportingService:
             ),
             category_breakdown=category_breakdown,
             budget_health=budget_health,
-            source_health=source_health,
+            wallet_health=wallet_health,
             trend_analysis=trend_analysis,
             spending_velocity=velocity,
             smart_insights=insights,
         )
 
     @staticmethod
-    def _fetch_transactions(cursor, user_id: int, start_date: str, end_date: str) -> list[ReportTransaction]:
+    def _fetch_transactions(cursor, user_id: int, start_date: str, end_date: str, wallet_id: int | None = None) -> list[ReportTransaction]:
+        params = [user_id, user_id, user_id, start_date, end_date]
+        wallet_filter = ""
+        if wallet_id is not None:
+            wallet_filter = " AND t.wallet_id = %s"
+            params.append(wallet_id)
         cursor.execute(
-            """
+            f"""
             SELECT
                 t.id,
                 t.date,
@@ -302,17 +330,17 @@ class ReportingService:
                 t.category_id,
                 COALESCE(c.name, 'Unknown') AS category_name,
                 COALESCE(c.type, 'cost') AS category_type,
-                COALESCE(s.name, '-') AS source_name
+                COALESCE(w.name, '-') AS source_name
             FROM transactions t
             LEFT JOIN categories c ON t.category_id = c.id
-            LEFT JOIN sources s ON t.source_id = s.id
-            WHERE t.user_id = %s
+            LEFT JOIN wallets w ON t.wallet_id = w.id
+            WHERE {_TX_ACCESS_WHERE}
               AND t.deleted_at IS NULL
               AND t.date >= %s
-              AND t.date <= %s
+              AND t.date <= %s{wallet_filter}
             ORDER BY t.date DESC, t.id DESC
             """,
-            (user_id, start_date, end_date),
+            tuple(params),
         )
         rows = cursor.fetchall()
         return [
@@ -367,16 +395,16 @@ class ReportingService:
             day = current - timedelta(days=offset)
             day_str = day.strftime("%Y-%m-%d")
             cursor.execute(
-                """
+                f"""
                 SELECT COALESCE(SUM(t.amount), 0) AS total
                 FROM transactions t
                 LEFT JOIN categories c ON t.category_id = c.id
-                WHERE t.user_id = %s
+                WHERE {_TX_ACCESS_WHERE}
                   AND t.deleted_at IS NULL
                   AND t.date = %s
                   AND c.type = 'cost'
                 """,
-                (user_id, day_str),
+                (user_id, user_id, user_id, day_str),
             )
             row = cursor.fetchone()
             totals.append(_to_float(row["total"]) if row else 0.0)
@@ -391,17 +419,17 @@ class ReportingService:
         planned = sum(_to_float(row["planned_amount"]) for row in budget_rows)
 
         cursor.execute(
-            """
+            f"""
             SELECT COALESCE(SUM(t.amount), 0) AS total
             FROM transactions t
             LEFT JOIN categories c ON t.category_id = c.id
-            WHERE t.user_id = %s
+            WHERE {_TX_ACCESS_WHERE}
               AND t.deleted_at IS NULL
               AND t.date >= %s
               AND t.date <= %s
               AND c.type = 'cost'
             """,
-            (user_id, month_start, month_end),
+            (user_id, user_id, user_id, month_start, month_end),
         )
         row = cursor.fetchone()
         consumed = _to_float(row["total"]) if row else 0.0
@@ -508,26 +536,26 @@ class ReportingService:
         )
 
     @staticmethod
-    def _build_source_health(cursor, user_id: int, start_date: str, end_date: str) -> list[SourceHealth]:
+    def _build_wallet_health(cursor, user_id: int, start_date: str, end_date: str) -> list[WalletHealth]:
         cursor.execute(
-            "SELECT id, name, amount FROM sources WHERE user_id = %s AND deleted_at IS NULL ORDER BY name",
-            (user_id,),
+            "SELECT id, name, amount FROM wallets WHERE deleted_at IS NULL AND (user_id = %s OR id IN (SELECT wallet_id FROM wallet_members WHERE user_id = %s)) ORDER BY name",
+            (user_id, user_id),
         )
-        sources = cursor.fetchall()
-        period_delta = ReportingService._source_delta_map(cursor, user_id, start_date, end_date)
-        after_delta = ReportingService._source_delta_after_map(cursor, user_id, end_date)
+        wallets = cursor.fetchall()
+        period_delta = ReportingService._wallet_delta_map(cursor, user_id, start_date, end_date)
+        after_delta = ReportingService._wallet_delta_after_map(cursor, user_id, end_date)
 
         results = []
-        for source in sources:
-            source_id = source["id"]
-            current_amount = _to_float(source["amount"])
-            ending_balance = current_amount - after_delta.get(source_id, 0.0)
-            balance_change = period_delta.get(source_id, 0.0)
+        for wallet in wallets:
+            wallet_id = wallet["id"]
+            current_amount = _to_float(wallet["amount"])
+            ending_balance = current_amount - after_delta.get(wallet_id, 0.0)
+            balance_change = period_delta.get(wallet_id, 0.0)
             starting_balance = ending_balance - balance_change
             results.append(
-                SourceHealth(
-                    source_id=source_id,
-                    source_name=source["name"],
+                WalletHealth(
+                    wallet_id=wallet_id,
+                    wallet_name=wallet["name"],
                     starting_balance=starting_balance,
                     ending_balance=ending_balance,
                     balance_change=balance_change,
@@ -536,120 +564,120 @@ class ReportingService:
         return results
 
     @staticmethod
-    def _source_delta_map(cursor, user_id: int, start_date: str, end_date: str) -> dict[int, float]:
+    def _wallet_delta_map(cursor, user_id: int, start_date: str, end_date: str) -> dict[int, float]:
         deltas: dict[int, float] = {}
 
         cursor.execute(
-            """
+            f"""
             SELECT
-                t.source_id AS source_id,
+                t.wallet_id AS wallet_id,
                 SUM(CASE WHEN c.type = 'income' THEN t.amount ELSE -t.amount END) AS delta
             FROM transactions t
             LEFT JOIN categories c ON t.category_id = c.id
-            WHERE t.user_id = %s
+            WHERE {_TX_ACCESS_WHERE}
               AND t.deleted_at IS NULL
-              AND t.source_id IS NOT NULL
+              AND t.wallet_id IS NOT NULL
               AND t.date >= %s
               AND t.date <= %s
-            GROUP BY t.source_id
+            GROUP BY t.wallet_id
             """,
-            (user_id, start_date, end_date),
+            (user_id, user_id, user_id, start_date, end_date),
         )
         for row in cursor.fetchall():
-            deltas[row["source_id"]] = (
-                deltas.get(row["source_id"], 0.0) + _to_float(row["delta"])
+            deltas[row["wallet_id"]] = (
+                deltas.get(row["wallet_id"], 0.0) + _to_float(row["delta"])
             )
 
         cursor.execute(
-            """
-            SELECT from_source_id AS source_id, SUM(-amount) AS delta
+            f"""
+            SELECT from_wallet_id AS wallet_id, SUM(-amount) AS delta
             FROM transfers
-            WHERE user_id = %s
+            WHERE {_TRANSFER_ACCESS_WHERE}
               AND deleted_at IS NULL
               AND date >= %s
               AND date <= %s
-            GROUP BY from_source_id
+            GROUP BY from_wallet_id
             """,
-            (user_id, start_date, end_date),
+            (user_id, user_id, user_id, user_id, start_date, end_date),
         )
         for row in cursor.fetchall():
-            deltas[row["source_id"]] = (
-                deltas.get(row["source_id"], 0.0) + _to_float(row["delta"])
+            deltas[row["wallet_id"]] = (
+                deltas.get(row["wallet_id"], 0.0) + _to_float(row["delta"])
             )
 
         cursor.execute(
-            """
-            SELECT to_source_id AS source_id, SUM(amount) AS delta
+            f"""
+            SELECT to_wallet_id AS wallet_id, SUM(amount) AS delta
             FROM transfers
-            WHERE user_id = %s
+            WHERE {_TRANSFER_ACCESS_WHERE}
               AND deleted_at IS NULL
               AND date >= %s
               AND date <= %s
-            GROUP BY to_source_id
+            GROUP BY to_wallet_id
             """,
-            (user_id, start_date, end_date),
+            (user_id, user_id, user_id, user_id, start_date, end_date),
         )
         for row in cursor.fetchall():
-            deltas[row["source_id"]] = (
-                deltas.get(row["source_id"], 0.0) + _to_float(row["delta"])
+            deltas[row["wallet_id"]] = (
+                deltas.get(row["wallet_id"], 0.0) + _to_float(row["delta"])
             )
 
         return deltas
 
     @staticmethod
-    def _source_delta_after_map(cursor, user_id: int, end_date: str) -> dict[int, float]:
+    def _wallet_delta_after_map(cursor, user_id: int, end_date: str) -> dict[int, float]:
         deltas: dict[int, float] = {}
 
         cursor.execute(
-            """
+            f"""
             SELECT
-                t.source_id AS source_id,
+                t.wallet_id AS wallet_id,
                 SUM(CASE WHEN c.type = 'income' THEN t.amount ELSE -t.amount END) AS delta
             FROM transactions t
             LEFT JOIN categories c ON t.category_id = c.id
-            WHERE t.user_id = %s
+            WHERE {_TX_ACCESS_WHERE}
               AND t.deleted_at IS NULL
-              AND t.source_id IS NOT NULL
+              AND t.wallet_id IS NOT NULL
               AND t.date > %s
-            GROUP BY t.source_id
+            GROUP BY t.wallet_id
             """,
-            (user_id, end_date),
+            (user_id, user_id, user_id, end_date),
         )
         for row in cursor.fetchall():
-            deltas[row["source_id"]] = (
-                deltas.get(row["source_id"], 0.0) + _to_float(row["delta"])
+            deltas[row["wallet_id"]] = (
+                deltas.get(row["wallet_id"], 0.0) + _to_float(row["delta"])
             )
 
         cursor.execute(
-            """
-            SELECT from_source_id AS source_id, SUM(-amount) AS delta
+            f"""
+            SELECT from_wallet_id AS wallet_id, SUM(-amount) AS delta
             FROM transfers
-            WHERE user_id = %s
+            WHERE {_TRANSFER_ACCESS_WHERE}
               AND deleted_at IS NULL
               AND date > %s
-            GROUP BY from_source_id
+            GROUP BY from_wallet_id
             """,
-            (user_id, end_date),
+            (user_id, user_id, user_id, user_id, end_date),
         )
         for row in cursor.fetchall():
-            deltas[row["source_id"]] = (
-                deltas.get(row["source_id"], 0.0) + _to_float(row["delta"])
+            deltas[row["wallet_id"]] = (
+                deltas.get(row["wallet_id"], 0.0) + _to_float(row["delta"])
             )
 
         cursor.execute(
-            """
-            SELECT to_source_id AS source_id, SUM(amount) AS delta
+            f"""
+            SELECT to_wallet_id AS wallet_id, SUM(amount) AS delta
             FROM transfers
-            WHERE user_id = %s
+            WHERE {_TRANSFER_ACCESS_WHERE}
               AND deleted_at IS NULL
               AND date > %s
-            GROUP BY to_source_id
+            GROUP BY to_wallet_id
             """,
-            (user_id, end_date),
+            (user_id, user_id, user_id, user_id, end_date),
         )
         for row in cursor.fetchall():
-            deltas[row["source_id"]] = (
-                deltas.get(row["source_id"], 0.0) + _to_float(row["delta"])
+            deltas[row["wallet_id"]] = (
+                deltas.get(row["wallet_id"], 0.0) + _to_float(row["delta"])
             )
 
         return deltas
@@ -788,16 +816,16 @@ class ReportingService:
         )
 
 
-def get_daily_report(user_id: int, date: str):
-    return ReportingService.get_daily_report(user_id, date)
+def get_daily_report(user_id: int, date: str, wallet_id: int | None = None):
+    return ReportingService.get_daily_report(user_id, date, wallet_id=wallet_id)
 
 
-def get_weekly_report(user_id: int, start_date: str):
-    return ReportingService.get_weekly_report(user_id, start_date)
+def get_weekly_report(user_id: int, start_date: str, wallet_id: int | None = None):
+    return ReportingService.get_weekly_report(user_id, start_date, wallet_id=wallet_id)
 
 
-def get_monthly_report(user_id: int, year: int, month: int):
-    return ReportingService.get_monthly_report(user_id, year, month)
+def get_monthly_report(user_id: int, year: int, month: int, wallet_id: int | None = None):
+    return ReportingService.get_monthly_report(user_id, year, month, wallet_id=wallet_id)
 
 
 def report_to_dict(report):

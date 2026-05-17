@@ -190,7 +190,7 @@ class InstallmentListScreen(Screen):
             f"[b]Due Day:[/b]           {plan.get('due_day_of_month', '')}\n"
             f"[b]Status:[/b]            {plan.get('status', '')}\n"
             f"[b]Category:[/b]       {plan.get('category', '')}\n"
-            f"[b]Source:[/b]         {plan.get('source') or '-'}\n"
+            f"[b]Wallet:[/b]        {plan.get('wallet') or '-'}\n"
         )
 
     def action_go_back(self):
@@ -327,8 +327,8 @@ class InstallmentAddScreen(Screen):
                         yield Input(placeholder="1-31", id="inst_due_day")
                 yield Label("Category:")
                 yield Select([], prompt="Loading...", id="inst_category")
-                yield Label("Source (optional):")
-                yield Select([], prompt="Loading...", id="inst_source")
+                yield Label("Wallet (optional):")
+                yield Select([], prompt="Loading...", id="inst_wallet")
                 yield Label("Status:")
                 yield Select(
                     [("Active", "active"), ("Completed", "completed"), ("Canceled", "canceled")],
@@ -348,7 +348,7 @@ class InstallmentAddScreen(Screen):
 
     def on_mount(self) -> None:
         self._load_categories()
-        self._load_sources()
+        self._load_wallets()
         self.query_one("#inst_status", Select).value = "active"
 
     def _load_categories(self):
@@ -363,17 +363,17 @@ class InstallmentAddScreen(Screen):
             select.set_options(options)
             select.prompt = "Select category"
 
-    def _load_sources(self):
-        resp = api_get("/sources", username=self.app.user.get("username"))
+    def _load_wallets(self):
+        resp = api_get("/wallets", username=self.app.user.get("username"))
         data, err = handle_response(resp)
-        select = self.query_one("#inst_source", Select)
+        select = self.query_one("#inst_wallet", Select)
         if err or not data:
             select.set_options([])
-            select.prompt = "No sources"
+            select.prompt = "No wallets"
         else:
             options = [(s["name"], s["id"]) for s in data]
             select.set_options(options)
-            select.prompt = "Select source"
+            select.prompt = "Select wallet"
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
@@ -392,7 +392,7 @@ class InstallmentAddScreen(Screen):
         start_date = self.query_one("#inst_start_date", Input).value.strip()
         due_day_str = self.query_one("#inst_due_day", Input).value.strip()
         category_id = self.query_one("#inst_category", Select).value
-        source_id = self.query_one("#inst_source", Select).value
+        wallet_id = self.query_one("#inst_wallet", Select).value
         status = self.query_one("#inst_status", Select).value
         desc = self.query_one("#inst_desc", TextArea).text.strip() or None
 
@@ -444,7 +444,7 @@ class InstallmentAddScreen(Screen):
             "start_date": start_gregorian,
             "due_day_of_month": due_day,
             "category_id": category_id,
-            "source_id": source_id if source_id is not None and source_id != Select.BLANK else None,
+            "wallet_id": wallet_id if wallet_id is not None and wallet_id != Select.BLANK else None,
             "status": str(status),
             "description": desc,
         }
@@ -468,7 +468,7 @@ class InstallmentAddScreen(Screen):
             self.query_one("#inst_start_date", Input).value = ""
             self.query_one("#inst_due_day", Input).value = ""
             self.query_one("#inst_category", Select).clear()
-            self.query_one("#inst_source", Select).clear()
+            self.query_one("#inst_wallet", Select).clear()
             self.query_one("#inst_status", Select).value = "active"
             self.query_one("#inst_desc", TextArea).load_text("")
 
@@ -504,8 +504,8 @@ class InstallmentEditScreen(Screen):
                 yield Input(placeholder="1-31", id="inst_due_day")
                 yield Label("Category:")
                 yield Input(id="inst_category", disabled=True)
-                yield Label("Source:")
-                yield Input(id="inst_source", disabled=True)
+                yield Label("Wallet:")
+                yield Input(id="inst_wallet", disabled=True)
                 yield Label("Status:")
                 yield Input(id="inst_status", disabled=True)
                 yield Label("Description (optional):")
@@ -534,7 +534,7 @@ class InstallmentEditScreen(Screen):
         self.query_one("#inst_start_date", Input).value = start_jalali
         self.query_one("#inst_due_day", Input).value = str(data.get("due_day_of_month", ""))
         self.query_one("#inst_category", Input).value = str(data.get("category", ""))
-        self.query_one("#inst_source", Input).value = str(data.get("source") or "")
+        self.query_one("#inst_wallet", Input).value = str(data.get("wallet") or "")
         self.query_one("#inst_status", Input).value = data.get("status", "")
         self.query_one("#inst_desc", TextArea).load_text(data.get("description") or "")
 

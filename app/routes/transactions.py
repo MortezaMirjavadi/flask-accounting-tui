@@ -1,3 +1,4 @@
+import math
 import psycopg2
 from flask import Blueprint, request, jsonify
 from app.utils.helpers import (
@@ -8,6 +9,8 @@ from app.utils.helpers import (
 )
 from app.models import validate_transaction_payload, validate_transaction_items_payload
 from app.services.transaction_item_service import TransactionItemService
+from app.utils.currency import get_exchange_rate, convert_amount
+from app.utils.pagination import parse_pagination, paginated_query
 from database import get_connection, release_connection
 
 bp = Blueprint('transactions', __name__)
@@ -22,30 +25,70 @@ def _get_category_type(cursor, category_id, user_id):
     return row["type"] if row else None
 
 
-def _get_source_amount(cursor, source_id, user_id):
+def _get_wallet_amount(cursor, wallet_id, user_id):
     cursor.execute(
-        "SELECT amount FROM sources WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
-        (source_id, user_id),
+        "SELECT amount FROM wallets WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
+        (wallet_id, user_id),
     )
     row = cursor.fetchone()
     return row["amount"] if row else None
 
 
-def _source_exists(cursor, source_id, user_id):
+def _get_account_amount(cursor, account_id):
+    """Get account balance. Returns None if not found."""
     cursor.execute(
-        "SELECT 1 FROM sources WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
-        (source_id, user_id),
+        "SELECT amount FROM accounts WHERE id = %s AND deleted_at IS NULL",
+        (account_id,),
+    )
+    row = cursor.fetchone()
+    return float(row["amount"]) if row else None
+
+
+def _get_account_currency(cursor, account_id):
+    """Get account currency (inherited from wallet). Returns None if not found."""
+    cursor.execute(
+        """
+        SELECT w.currency FROM accounts a
+        JOIN wallets w ON w.id = a.wallet_id
+        WHERE a.id = %s AND a.deleted_at IS NULL
+        """,
+        (account_id,),
+    )
+    row = cursor.fetchone()
+    return row["currency"] if row else None
+
+
+def _get_account_wallet_id(cursor, account_id):
+    """Get wallet_id for an account."""
+    cursor.execute(
+        "SELECT wallet_id FROM accounts WHERE id = %s AND deleted_at IS NULL",
+        (account_id,),
+    )
+    row = cursor.fetchone()
+    return row["wallet_id"] if row else None
+
+
+def _wallet_exists(cursor, wallet_id, user_id):
+    cursor.execute(
+        "SELECT 1 FROM wallets WHERE id = %s AND deleted_at IS NULL AND (user_id = %s OR EXISTS (SELECT 1 FROM wallet_members WHERE wallet_id = %s AND user_id = %s))",
+        (wallet_id, user_id, wallet_id, user_id),
     )
     return cursor.fetchone() is not None
 
 
-def _adjust_source_amount(cursor, source_id, user_id, amount, category_type):
-    if source_id is None or category_type not in ("income", "cost"):
+def _adjust_wallet_amount(cursor, wallet_id, user_id, amount, category_type):
+    """Legacy: no-op. Wallet balances are derived from account sums."""
+    pass
+
+
+def _adjust_account_amount(cursor, account_id, amount, category_type):
+    """Adjust account balance."""
+    if account_id is None or category_type not in ("income", "cost"):
         return
     delta = amount if category_type == "income" else -amount
     cursor.execute(
-        "UPDATE sources SET amount = amount + %s WHERE id = %s AND user_id = %s",
-        (delta, source_id, user_id),
+        "UPDATE accounts SET amount = amount + %s WHERE id = %s",
+        (delta, account_id),
     )
 
 
@@ -54,33 +97,40 @@ def _validate_transfer_payload(data):
     notes = (data.get("description") or data.get("notes") or "").strip() or None
 
     if not date:
-        raise ValueError("Date is required")
+        raise ValueError("تاریخ الزامی است")
 
     try:
         amount = float(data.get("amount"))
         if amount <= 0:
             raise ValueError
     except (TypeError, ValueError):
-        raise ValueError("Valid positive amount is required")
+        raise ValueError("مبلغ معتبر مثبت الزامی است")
+
+    from_account_id = data.get("from_account_id")
+    to_account_id = data.get("to_account_id")
+
+    if from_account_id is None:
+        raise ValueError("شناسه حساب مبدا الزامی است")
+    if to_account_id is None:
+        raise ValueError("شناسه حساب مقصد الزامی است")
 
     try:
-        from_source_id = int(data.get("from_source_id"))
+        from_account_id = int(from_account_id)
     except (TypeError, ValueError):
-        raise ValueError("Valid from_source_id is required")
-
+        raise ValueError("شناسه حساب مبدا معتبر الزامی است")
     try:
-        to_source_id = int(data.get("to_source_id"))
+        to_account_id = int(to_account_id)
     except (TypeError, ValueError):
-        raise ValueError("Valid to_source_id is required")
+        raise ValueError("شناسه حساب مقصد معتبر الزامی است")
 
-    if from_source_id == to_source_id:
-        raise ValueError("from_source_id and to_source_id must be different")
+    if from_account_id == to_account_id:
+        raise ValueError("حساب مبدا و مقصد باید متفاوت باشند")
 
     return {
         "date": jalali_to_gregorian(date),
         "amount": amount,
-        "from_source_id": from_source_id,
-        "to_source_id": to_source_id,
+        "from_account_id": from_account_id,
+        "to_account_id": to_account_id,
         "notes": notes,
     }
 
@@ -108,72 +158,146 @@ def _serialize_transfer(payload, tx_id):
 
 def _format_transfer_list_row(row):
     data = row_to_dict(row)
-    from_name = data.get("from_source_name") or "Unknown"
-    to_name = data.get("to_source_name") or "Unknown"
+    from_name = data.get("from_account_name") or data.get("from_wallet_name") or "Unknown"
+    to_name = data.get("to_account_name") or data.get("to_wallet_name") or "Unknown"
     data["record_type"] = "transfer"
     data["is_transfer"] = True
     data["category_name"] = "Transfer"
     data["source_name"] = f"{from_name} -> {to_name}"
-    data["description"] = data.get("notes") or "Transfer between sources"
+    data["description"] = data.get("notes") or "Transfer between accounts"
     data["date"] = gregorian_to_jalali(data["date"])
     return data
 
 
 def _get_transaction_row(cursor, tx_id, user_id):
     cursor.execute(
-        "SELECT t.*, c.name as category_name, s.name as source_name "
+        "SELECT t.*, c.name as category_name, w.name as source_name, "
+        "w.wallet_type, w.user_id as wallet_owner_id, "
+        "u.username as creator_username, u.display_name as creator_display_name "
         "FROM transactions t "
         "LEFT JOIN categories c ON t.category_id = c.id "
-        "LEFT JOIN sources s ON t.source_id = s.id "
-        "WHERE t.id = %s AND t.user_id = %s AND t.deleted_at IS NULL",
-        (tx_id, user_id),
+        "LEFT JOIN wallets w ON t.wallet_id = w.id "
+        "LEFT JOIN users u ON u.id = t.user_id "
+        "WHERE t.id = %s AND t.deleted_at IS NULL"
+        " AND ("
+        "   (t.wallet_id IS NULL AND t.user_id = %s)"
+        "   OR t.wallet_id IN ("
+        "     SELECT id FROM wallets WHERE user_id = %s AND deleted_at IS NULL"
+        "     UNION"
+        "     SELECT wallet_id FROM wallet_members WHERE user_id = %s"
+        "   )"
+        " )",
+        (tx_id, user_id, user_id, user_id),
     )
     return cursor.fetchone()
 
 
 def _get_transfer_row(cursor, tx_id, user_id):
     cursor.execute(
-        "SELECT t.*, fs.name as from_source_name, ts.name as to_source_name "
+        "SELECT t.*, "
+        "fa.name as from_account_name, ta.name as to_account_name, "
+        "fw.name as from_wallet_name, tw.name as to_wallet_name "
         "FROM transfers t "
-        "LEFT JOIN sources fs ON t.from_source_id = fs.id "
-        "LEFT JOIN sources ts ON t.to_source_id = ts.id "
-        "WHERE t.id = %s AND t.user_id = %s AND t.deleted_at IS NULL",
-        (tx_id, user_id),
+        "LEFT JOIN accounts fa ON t.from_account_id = fa.id "
+        "LEFT JOIN accounts ta ON t.to_account_id = ta.id "
+        "LEFT JOIN wallets fw ON t.from_wallet_id = fw.id "
+        "LEFT JOIN wallets tw ON t.to_wallet_id = tw.id "
+        "WHERE t.id = %s AND t.deleted_at IS NULL"
+        " AND (t.from_wallet_id IN ("
+        "   SELECT id FROM wallets WHERE user_id = %s AND deleted_at IS NULL"
+        "   UNION SELECT wallet_id FROM wallet_members WHERE user_id = %s"
+        " ) OR t.to_wallet_id IN ("
+        "   SELECT id FROM wallets WHERE user_id = %s AND deleted_at IS NULL"
+        "   UNION SELECT wallet_id FROM wallet_members WHERE user_id = %s"
+        " ))",
+        (tx_id, user_id, user_id, user_id, user_id),
     )
     return cursor.fetchone()
+
+
+def _can_modify_transaction(cursor, transaction_row, user_id):
+    """Check if the user can edit/delete a transaction.
+
+    Returns True if:
+    - The wallet is personal and user is the creator
+    - The wallet is shared and user is the wallet owner
+    - The wallet is shared and user is an editor who created the transaction
+    """
+    wallet_id = transaction_row.get("wallet_id")
+    if wallet_id is None:
+        # No wallet — only the creator can modify
+        return transaction_row["user_id"] == user_id
+
+    # Check wallet info
+    cursor.execute(
+        "SELECT user_id, wallet_type FROM wallets WHERE id = %s AND deleted_at IS NULL",
+        (wallet_id,)
+    )
+    wallet = cursor.fetchone()
+    if wallet is None:
+        return False
+
+    # Personal wallet — only the creator can modify
+    if wallet["wallet_type"] == "personal" or wallet["wallet_type"] is None:
+        return transaction_row["user_id"] == user_id
+
+    # Shared wallet
+    if wallet["user_id"] == user_id:
+        # User is the wallet owner — can modify anything
+        return True
+
+    # Check user's role in the wallet
+    cursor.execute(
+        "SELECT role FROM wallet_members WHERE wallet_id = %s AND user_id = %s",
+        (wallet_id, user_id)
+    )
+    member = cursor.fetchone()
+    if member is None:
+        return False
+
+    if member["role"] == "owner":
+        return True
+    if member["role"] == "editor":
+        # Editor can only modify their own transactions
+        return transaction_row["user_id"] == user_id
+
+    # Viewer cannot modify
+    return False
 
 
 def _validate_transaction_business_rules(cursor, user_id, payload, old_transaction=None, old_transfer=None):
     new_type = _get_category_type(cursor, payload["category_id"], user_id)
     if new_type is None:
-        return jsonify({"error": "Category not found"}), None
+        return jsonify({"error": "دسته‌بندی یافت نشد"}), None
 
-    new_source_id = payload.get("source_id")
-    if new_source_id is not None and not _source_exists(cursor, new_source_id, user_id):
-        return jsonify({"error": "Source not found"}), None
+    new_wallet_id = payload.get("wallet_id")
+    if new_wallet_id is not None and not _wallet_exists(cursor, new_wallet_id, user_id):
+        return jsonify({"error": "کیف پول یافت نشد"}), None
 
-    if new_type == "cost" and new_source_id is not None:
-        current = _get_source_amount(cursor, new_source_id, user_id)
+    # Validate against account balance (balances live on accounts, not wallets)
+    account_id = payload.get("account_id")
+    if new_type == "cost" and account_id is not None:
+        current = _get_account_amount(cursor, account_id)
         if current is None:
-            return jsonify({"error": "Source not found"}), None
+            return jsonify({"error": "حساب یافت نشد"}), None
 
         effective = current
         if old_transaction is not None:
             old_type = _get_category_type(cursor, old_transaction["category_id"], user_id)
-            if old_transaction["source_id"] == new_source_id and old_type:
+            if old_transaction.get("account_id") == account_id and old_type:
                 effective += old_transaction["amount"] if old_type == "cost" else -old_transaction["amount"]
         if old_transfer is not None:
-            if old_transfer["from_source_id"] == new_source_id:
+            if old_transfer.get("from_account_id") == account_id:
                 effective += old_transfer["amount"]
-            if old_transfer["to_source_id"] == new_source_id:
+            if old_transfer.get("to_account_id") == account_id:
                 effective -= old_transfer["amount"]
 
         if effective < payload["amount"]:
             return (
                 jsonify(
                     {
-                        "error": "Insufficient source balance",
-                        "source_amount": effective,
+                        "error": "موجودی حساب کافی نیست",
+                        "account_balance": effective,
                         "requested": payload["amount"],
                     }
                 ),
@@ -184,37 +308,44 @@ def _validate_transaction_business_rules(cursor, user_id, payload, old_transacti
 
 
 def _validate_transfer_business_rules(cursor, user_id, payload, old_transaction=None, old_transfer=None):
-    from_source_id = payload["from_source_id"]
-    to_source_id = payload["to_source_id"]
+    from_account_id = payload.get("from_account_id")
+    to_account_id = payload.get("to_account_id")
 
-    if not _source_exists(cursor, from_source_id, user_id):
-        return jsonify({"error": "From source not found"})
-    if not _source_exists(cursor, to_source_id, user_id):
-        return jsonify({"error": "To source not found"})
+    if from_account_id is not None:
+        current = _get_account_amount(cursor, from_account_id)
+        if current is None:
+            return jsonify({"error": "حساب مبدا یافت نشد"})
 
-    current = _get_source_amount(cursor, from_source_id, user_id)
-    if current is None:
-        return jsonify({"error": "From source not found"})
+        effective = current
+        if old_transaction is not None:
+            old_type = _get_category_type(cursor, old_transaction["category_id"], user_id)
+            if old_transaction.get("account_id") == from_account_id and old_type:
+                effective += old_transaction["amount"] if old_type == "cost" else -old_transaction["amount"]
+        if old_transfer is not None:
+            if old_transfer.get("from_account_id") == from_account_id:
+                effective += old_transfer["amount"]
+            if old_transfer.get("to_account_id") == from_account_id:
+                effective -= old_transfer["amount"]
 
-    effective = current
-    if old_transaction is not None:
-        old_type = _get_category_type(cursor, old_transaction["category_id"], user_id)
-        if old_transaction["source_id"] == from_source_id and old_type:
-            effective += old_transaction["amount"] if old_type == "cost" else -old_transaction["amount"]
-    if old_transfer is not None:
-        if old_transfer["from_source_id"] == from_source_id:
-            effective += old_transfer["amount"]
-        if old_transfer["to_source_id"] == from_source_id:
-            effective -= old_transfer["amount"]
+        if effective < payload["amount"]:
+            return jsonify(
+                {
+                    "error": "موجودی حساب کافی نیست",
+                    "account_balance": effective,
+                    "requested": payload["amount"],
+                }
+            )
 
-    if effective < payload["amount"]:
-        return jsonify(
-            {
-                "error": "Insufficient source balance",
-                "source_amount": effective,
-                "requested": payload["amount"],
-            }
-        )
+    # Validate both accounts exist and belong to the same wallet
+    if from_account_id and to_account_id:
+        from_wallet = _get_account_wallet_id(cursor, from_account_id)
+        to_wallet = _get_account_wallet_id(cursor, to_account_id)
+        if from_wallet is None:
+            return jsonify({"error": "حساب مبدا یافت نشد"})
+        if to_wallet is None:
+            return jsonify({"error": "حساب مقصد یافت نشد"})
+        if from_wallet != to_wallet:
+            return jsonify({"error": "هر دو حساب باید متعلق به یک کیف پول باشند"})
 
     return None
 
@@ -222,35 +353,56 @@ def _validate_transfer_business_rules(cursor, user_id, payload, old_transaction=
 def _reverse_transaction_effect(cursor, transaction_row, user_id):
     old_type = _get_category_type(cursor, transaction_row["category_id"], user_id)
     if old_type:
-        _adjust_source_amount(
-            cursor,
-            transaction_row["source_id"],
-            user_id,
-            transaction_row["amount"],
-            "cost" if old_type == "income" else "income",
-        )
+        account_id = transaction_row.get("account_id")
+        if account_id:
+            _adjust_account_amount(cursor, account_id, transaction_row["amount"],
+                                   "cost" if old_type == "income" else "income")
+        else:
+            _adjust_wallet_amount(cursor, transaction_row["wallet_id"], user_id,
+                                  transaction_row["amount"],
+                                  "cost" if old_type == "income" else "income")
 
 
 def _apply_transfer_effect(cursor, transfer_row, user_id):
-    cursor.execute(
-        "UPDATE sources SET amount = amount - %s WHERE id = %s AND user_id = %s",
-        (transfer_row["amount"], transfer_row["from_source_id"], user_id),
-    )
-    cursor.execute(
-        "UPDATE sources SET amount = amount + %s WHERE id = %s AND user_id = %s",
-        (transfer_row["amount"], transfer_row["to_source_id"], user_id),
-    )
+    """Apply transfer: debit from, credit to (with optional currency conversion)."""
+    from_account_id = transfer_row.get("from_account_id")
+    to_account_id = transfer_row.get("to_account_id")
+    amount = transfer_row["amount"]
+
+    if from_account_id and to_account_id:
+        # Account-level transfer with possible currency conversion
+        from_currency = _get_account_currency(cursor, from_account_id)
+        to_currency = _get_account_currency(cursor, to_account_id)
+
+        to_amount = amount
+        if from_currency and to_currency and from_currency != to_currency:
+            rate = get_exchange_rate(cursor, user_id, from_currency, to_currency)
+            if rate is not None:
+                to_amount = float(convert_amount(amount, from_currency, to_currency, rate))
+
+        _adjust_account_amount(cursor, from_account_id, amount, "cost")
+        _adjust_account_amount(cursor, to_account_id, to_amount, "income")
+    # else: legacy wallet-level transfers no longer supported (wallets have no amount column)
 
 
 def _reverse_transfer_effect(cursor, transfer_row, user_id):
-    cursor.execute(
-        "UPDATE sources SET amount = amount + %s WHERE id = %s AND user_id = %s",
-        (transfer_row["amount"], transfer_row["from_source_id"], user_id),
-    )
-    cursor.execute(
-        "UPDATE sources SET amount = amount - %s WHERE id = %s AND user_id = %s",
-        (transfer_row["amount"], transfer_row["to_source_id"], user_id),
-    )
+    from_account_id = transfer_row.get("from_account_id")
+    to_account_id = transfer_row.get("to_account_id")
+    amount = transfer_row["amount"]
+
+    if from_account_id and to_account_id:
+        from_currency = _get_account_currency(cursor, from_account_id)
+        to_currency = _get_account_currency(cursor, to_account_id)
+
+        to_amount = amount
+        if from_currency and to_currency and from_currency != to_currency:
+            rate = get_exchange_rate(cursor, user_id, from_currency, to_currency)
+            if rate is not None:
+                to_amount = float(convert_amount(amount, from_currency, to_currency, rate))
+
+        _adjust_account_amount(cursor, from_account_id, amount, "income")
+        _adjust_account_amount(cursor, to_account_id, to_amount, "cost")
+    # else: legacy wallet-level transfers no longer supported
 
 
 def _error_status(response):
@@ -261,13 +413,70 @@ def _error_status(response):
 
 @bp.route("", methods=["GET"])
 def list_transactions():
+    """List transactions with filters and optional transfers.
+    ---
+    tags:
+      - Transactions
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: page
+        in: query
+        type: integer
+        default: 1
+      - name: per_page
+        in: query
+        type: integer
+        default: 20
+      - name: category_id
+        in: query
+        type: integer
+      - name: wallet_id
+        in: query
+        type: integer
+      - name: source_id
+        in: query
+        type: integer
+        description: Alias for wallet_id
+      - name: date_from
+        in: query
+        type: string
+        description: Jalali start date (YYYY/MM/DD)
+      - name: date_to
+        in: query
+        type: string
+        description: Jalali end date (YYYY/MM/DD)
+      - name: min_amount
+        in: query
+        type: number
+      - name: max_amount
+        in: query
+        type: number
+      - name: description
+        in: query
+        type: string
+      - name: category_type
+        in: query
+        type: string
+        enum: [income, cost, transfer]
+      - name: include_transfers
+        in: query
+        type: string
+        description: Set to 1/true/yes to merge transfers into results
+    responses:
+      200:
+        description: Paginated list of transactions
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
-    
-    # ... filters ...
+
+    page, per_page = parse_pagination()
+
     category_id = request.args.get("category_id", type=int)
-    source_id = request.args.get("source_id", type=int)
+    wallet_id = request.args.get("wallet_id", type=int) or request.args.get("source_id", type=int)
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
     min_amount = request.args.get("min_amount", type=float)
@@ -278,104 +487,219 @@ def list_transactions():
 
     conn = get_connection()
     cursor = conn.cursor()
-    
-    query = (
-        "SELECT t.*, c.name as category_name, s.name as source_name, c.type as category_type "
-        "FROM transactions t "
-        "LEFT JOIN categories c ON t.category_id = c.id "
-        "LEFT JOIN sources s ON t.source_id = s.id "
-        "WHERE t.user_id = %s AND t.deleted_at IS NULL"
-    )
-    params = [user_id]
-    
-    if category_type == "transfer":
-        query += " AND 1 = 0"
-    if category_id is not None:
-        query += " AND t.category_id = %s"
-        params.append(category_id)
-    if category_type in ("income", "cost"):
-        query += " AND c.type = %s"
-        params.append(category_type)
-    if source_id is not None:
-        query += " AND t.source_id = %s"
-        params.append(source_id)
-    if date_from:
-        query += " AND t.date >= %s"
-        date_from = jalali_to_gregorian(date_from)
-        params.append(date_from)
-    if date_to:
-        query += " AND t.date <= %s"
-        date_to = jalali_to_gregorian(date_to)
-        params.append(date_to)
-    if min_amount is not None:
-        query += " AND t.amount >= %s"
-        params.append(min_amount)
-    if max_amount is not None:
-        query += " AND t.amount <= %s"
-        params.append(max_amount)
-    if description:
-        query += " AND t.description LIKE %s"
-        params.append(f"%{description}%")
-    
-    query += " ORDER BY t.date DESC"
-    
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
 
-    results = []
-    for r in rows:
-        d = row_to_dict(r)
-        d["record_type"] = "transaction"
-        d["is_transfer"] = False
-        d["date"] = gregorian_to_jalali(d["date"])
-        results.append(d)
-
-    if include_transfers and category_id is None and category_type in ("", "transfer"):
-        transfer_query = (
-            "SELECT t.*, fs.name as from_source_name, ts.name as to_source_name "
-            "FROM transfers t "
-            "LEFT JOIN sources fs ON t.from_source_id = fs.id "
-            "LEFT JOIN sources ts ON t.to_source_id = ts.id "
-            "WHERE t.user_id = %s AND t.deleted_at IS NULL"
+    try:
+        base_where = (
+            " WHERE t.deleted_at IS NULL"
+            " AND ("
+            "   (t.wallet_id IS NULL AND t.user_id = %s)"
+            "   OR t.wallet_id IN ("
+            "     SELECT id FROM wallets WHERE user_id = %s AND deleted_at IS NULL"
+            "     UNION"
+            "     SELECT wallet_id FROM wallet_members WHERE user_id = %s"
+            "   )"
+            " )"
+            " AND ("
+            "   t.is_private = FALSE"
+            "   OR t.user_id = %s"
+            "   OR EXISTS (SELECT 1 FROM wallets w2 WHERE w2.id = t.wallet_id AND w2.user_id = %s)"
+            " )"
         )
-        transfer_params = [user_id]
+        base_params = [user_id, user_id, user_id, user_id, user_id]
 
-        if source_id is not None:
-            transfer_query += " AND (t.from_source_id = %s OR t.to_source_id = %s)"
-            transfer_params.extend([source_id, source_id])
+        filter_clause = ""
+        filter_params = []
+
+        if category_type == "transfer":
+            filter_clause += " AND 1 = 0"
+        if category_id is not None:
+            filter_clause += " AND t.category_id = %s"
+            filter_params.append(category_id)
+        if category_type in ("income", "cost"):
+            filter_clause += " AND c.type = %s"
+            filter_params.append(category_type)
+        if wallet_id is not None:
+            filter_clause += " AND t.wallet_id = %s"
+            filter_params.append(wallet_id)
         if date_from:
-            transfer_query += " AND t.date >= %s"
-            transfer_params.append(date_from)
+            filter_clause += " AND t.date >= %s"
+            date_from = jalali_to_gregorian(date_from)
+            filter_params.append(date_from)
         if date_to:
-            transfer_query += " AND t.date <= %s"
-            transfer_params.append(date_to)
+            filter_clause += " AND t.date <= %s"
+            date_to = jalali_to_gregorian(date_to)
+            filter_params.append(date_to)
         if min_amount is not None:
-            transfer_query += " AND t.amount >= %s"
-            transfer_params.append(min_amount)
+            filter_clause += " AND t.amount >= %s"
+            filter_params.append(min_amount)
         if max_amount is not None:
-            transfer_query += " AND t.amount <= %s"
-            transfer_params.append(max_amount)
+            filter_clause += " AND t.amount <= %s"
+            filter_params.append(max_amount)
         if description:
-            transfer_query += " AND t.notes LIKE %s"
-            transfer_params.append(f"%{description}%")
+            filter_clause += " AND t.description LIKE %s"
+            filter_params.append(f"%{description}%")
 
-        cursor.execute(transfer_query, transfer_params)
-        transfer_rows = cursor.fetchall()
-        results.extend(_format_transfer_list_row(row) for row in transfer_rows)
+        join_clause = (
+            " FROM transactions t "
+            "LEFT JOIN categories c ON t.category_id = c.id "
+            "LEFT JOIN wallets w ON t.wallet_id = w.id "
+            "LEFT JOIN users u ON u.id = t.user_id"
+        )
+        all_params = base_params + filter_params
 
-    cursor.close()
-    release_connection(conn)
-    results.sort(key=lambda item: item.get("date", ""), reverse=True)
-    
-    return jsonify(results)
+        def _serialize_tx(row):
+            d = row_to_dict(row)
+            d["record_type"] = "transaction"
+            d["is_transfer"] = False
+            d["date"] = gregorian_to_jalali(d["date"])
+            return d
+
+        # When including transfers, merge both types and paginate in Python
+        if include_transfers and category_id is None and category_type in ("", "transfer"):
+            count_sql = "SELECT COUNT(*) as total" + join_clause + base_where + filter_clause
+            data_sql = (
+                "SELECT t.*, c.name as category_name, w.name as source_name, c.type as category_type, "
+                "w.wallet_type, w.user_id as wallet_owner_id, "
+                "u.username as creator_username, u.display_name as creator_display_name"
+                + join_clause + base_where + filter_clause + " ORDER BY t.date DESC"
+            )
+            cursor.execute(count_sql, all_params)
+            tx_total = cursor.fetchone()["total"]
+
+            # Fetch all transactions (no LIMIT) for merging
+            cursor.execute(data_sql, all_params)
+            tx_rows = cursor.fetchall()
+            results = [_serialize_tx(r) for r in tx_rows]
+
+            # Fetch matching transfers
+            transfer_query = (
+                "SELECT t.*, "
+                "fa.name as from_account_name, ta.name as to_account_name, "
+                "fw.name as from_wallet_name, tw.name as to_wallet_name "
+                "FROM transfers t "
+                "LEFT JOIN accounts fa ON t.from_account_id = fa.id "
+                "LEFT JOIN accounts ta ON t.to_account_id = ta.id "
+                "LEFT JOIN wallets fw ON t.from_wallet_id = fw.id "
+                "LEFT JOIN wallets tw ON t.to_wallet_id = tw.id "
+                "WHERE t.deleted_at IS NULL"
+                " AND (t.from_wallet_id IN ("
+                "   SELECT id FROM wallets WHERE user_id = %s AND deleted_at IS NULL"
+                "   UNION SELECT wallet_id FROM wallet_members WHERE user_id = %s"
+                " ) OR t.to_wallet_id IN ("
+                "   SELECT id FROM wallets WHERE user_id = %s AND deleted_at IS NULL"
+                "   UNION SELECT wallet_id FROM wallet_members WHERE user_id = %s"
+                " ))"
+            )
+            transfer_params = [user_id, user_id, user_id, user_id]
+
+            if wallet_id is not None:
+                transfer_query += " AND (t.from_wallet_id = %s OR t.to_wallet_id = %s)"
+                transfer_params.extend([wallet_id, wallet_id])
+            if date_from:
+                transfer_query += " AND t.date >= %s"
+                transfer_params.append(date_from)
+            if date_to:
+                transfer_query += " AND t.date <= %s"
+                transfer_params.append(date_to)
+            if min_amount is not None:
+                transfer_query += " AND t.amount >= %s"
+                transfer_params.append(min_amount)
+            if max_amount is not None:
+                transfer_query += " AND t.amount <= %s"
+                transfer_params.append(max_amount)
+            if description:
+                transfer_query += " AND t.notes LIKE %s"
+                transfer_params.append(f"%{description}%")
+
+            cursor.execute(transfer_query, transfer_params)
+            transfer_rows = cursor.fetchall()
+            results.extend(_format_transfer_list_row(row) for row in transfer_rows)
+
+            results.sort(key=lambda item: item.get("date", ""), reverse=True)
+            total = len(results)
+            total_pages = math.ceil(total / per_page) if per_page > 0 else 0
+            offset = (page - 1) * per_page
+            page_items = results[offset:offset + per_page]
+
+            return jsonify({
+                "items": page_items,
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": total_pages,
+            })
+        else:
+            # Standard pagination (transactions only)
+            count_sql = "SELECT COUNT(*) as total" + join_clause + base_where + filter_clause
+            data_sql = (
+                "SELECT t.*, c.name as category_name, w.name as source_name, c.type as category_type, "
+                "w.wallet_type, w.user_id as wallet_owner_id, "
+                "u.username as creator_username, u.display_name as creator_display_name"
+                + join_clause + base_where + filter_clause + " ORDER BY t.date DESC"
+            )
+            return paginated_query(cursor, count_sql, data_sql, all_params, _serialize_tx, page, per_page)
+    finally:
+        cursor.close()
+        release_connection(conn)
 
 
 @bp.route("", methods=["POST"])
 def create_transaction():
+    """Create a new transaction or transfer.
+    ---
+    tags:
+      - Transactions
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          properties:
+            is_transfer:
+              type: boolean
+              description: If true, creates a transfer instead of a transaction
+            date:
+              type: string
+              description: Jalali date (YYYY/MM/DD)
+            amount:
+              type: number
+            category_id:
+              type: integer
+            wallet_id:
+              type: integer
+            account_id:
+              type: integer
+            description:
+              type: string
+            is_private:
+              type: boolean
+            items:
+              type: array
+              description: Optional transaction line items
+            from_account_id:
+              type: integer
+              description: Required if is_transfer is true
+            to_account_id:
+              type: integer
+              description: Required if is_transfer is true
+          required:
+            - date
+            - amount
+    responses:
+      201:
+        description: Transaction or transfer created successfully
+      400:
+        description: Validation error
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
-    
+
     data = request.get_json(force=True, silent=True) or {}
     is_transfer = bool(data.get("is_transfer"))
 
@@ -394,16 +718,24 @@ def create_transaction():
             release_connection(conn)
             return err_response, status_code
         try:
+            # Derive wallet IDs from accounts
+            from_account_id = payload["from_account_id"]
+            to_account_id = payload["to_account_id"]
+            from_wallet_id = _get_account_wallet_id(cursor, from_account_id)
+            to_wallet_id = _get_account_wallet_id(cursor, to_account_id)
+
             cursor.execute(
                 """
-                INSERT INTO transfers (user_id, from_source_id, to_source_id, amount, date, notes)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO transfers (user_id, from_wallet_id, to_wallet_id, from_account_id, to_account_id, amount, date, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
                     user_id,
-                    payload["from_source_id"],
-                    payload["to_source_id"],
+                    from_wallet_id,
+                    to_wallet_id,
+                    from_account_id,
+                    to_account_id,
                     payload["amount"],
                     payload["date"],
                     payload["notes"],
@@ -414,7 +746,7 @@ def create_transaction():
                 conn.rollback()
                 cursor.close()
                 release_connection(conn)
-                return jsonify({"error": "Insert did not return id"}), 500
+                return jsonify({"error": "خطا در ثبت اطلاعات"}), 500
             new_id = new_row["id"]
             _apply_transfer_effect(cursor, payload, user_id)
             conn.commit()
@@ -445,7 +777,7 @@ def create_transaction():
             items_sum = sum(i["total_price"] for i in items)
             if abs(items_sum - payload["amount"]) > 0.01:
                 return jsonify({
-                    "error": "Sum of item prices does not match transaction amount",
+                    "error": "مجموع قیمت اقلام با مبلغ تراکنش مطابقت ندارد",
                     "items_sum": items_sum,
                     "transaction_amount": payload["amount"],
                 }), 400
@@ -460,12 +792,23 @@ def create_transaction():
         release_connection(conn)
         return err_response, status_code
 
-    source_id = payload.get("source_id")
+    # Resolve account_id and wallet_id
+    account_id = data.get("account_id")
+    source_id = payload.get("wallet_id")
+    is_private = bool(data.get("is_private", False))
+
+    # If account_id provided, resolve wallet_id from it
+    if account_id:
+        resolved_wallet = _get_account_wallet_id(cursor, account_id)
+        if resolved_wallet:
+            source_id = resolved_wallet
+            payload["wallet_id"] = source_id
+
     try:
         cursor.execute(
             """
-            INSERT INTO transactions (user_id, date, amount, category_id, source_id, description)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO transactions (user_id, date, amount, category_id, wallet_id, account_id, description, is_private)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -474,7 +817,9 @@ def create_transaction():
                 payload["amount"],
                 payload["category_id"],
                 source_id,
+                account_id,
                 payload["description"],
+                is_private,
             ),
         )
         new_row = cursor.fetchone()
@@ -482,7 +827,7 @@ def create_transaction():
             conn.rollback()
             cursor.close()
             release_connection(conn)
-            return jsonify({"error": "Insert did not return id"}), 500
+            return jsonify({"error": "خطا در ثبت اطلاعات"}), 500
         new_id = new_row['id']
 
         # Insert items if provided
@@ -490,7 +835,11 @@ def create_transaction():
         if items:
             inserted_items = TransactionItemService.create_items(cursor, new_id, items)
 
-        _adjust_source_amount(cursor, source_id, user_id, payload["amount"], cat_type)
+        # Adjust balance at account level or wallet level
+        if account_id:
+            _adjust_account_amount(cursor, account_id, payload["amount"], cat_type)
+        else:
+            _adjust_wallet_amount(cursor, source_id, user_id, payload["amount"], cat_type)
         conn.commit()
     except Exception as exc:
         conn.rollback()
@@ -509,6 +858,30 @@ def create_transaction():
 
 @bp.route("/<int:tx_id>", methods=["GET"])
 def get_transaction(tx_id):
+    """Get a single transaction or transfer by ID.
+    ---
+    tags:
+      - Transactions
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: tx_id
+        in: path
+        type: integer
+        required: true
+      - name: record_type
+        in: query
+        type: string
+        enum: [transaction, transfer]
+        description: Hint to look up as transaction or transfer first
+    responses:
+      200:
+        description: Transaction or transfer details
+      404:
+        description: Transaction not found
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -526,7 +899,7 @@ def get_transaction(tx_id):
     if row is None:
         cursor.close()
         release_connection(conn)
-        return jsonify({"error": "Transaction not found"}), 404
+        return jsonify({"error": "تراکنش یافت نشد"}), 404
     d = row_to_dict(row)
     d["date"] = gregorian_to_jalali(d["date"])
     if record_type == "transfer":
@@ -546,6 +919,68 @@ def get_transaction(tx_id):
 
 @bp.route("/<int:tx_id>", methods=["PUT"])
 def update_transaction(tx_id):
+    """Update an existing transaction or transfer. Supports type conversion between transaction and transfer.
+    ---
+    tags:
+      - Transactions
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: tx_id
+        in: path
+        type: integer
+        required: true
+      - name: record_type
+        in: query
+        type: string
+        enum: [transaction, transfer]
+        description: Hint for the current record type
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          properties:
+            is_transfer:
+              type: boolean
+            original_is_transfer:
+              type: boolean
+              description: Indicates the current record is a transfer
+            date:
+              type: string
+            amount:
+              type: number
+            category_id:
+              type: integer
+            wallet_id:
+              type: integer
+            account_id:
+              type: integer
+            description:
+              type: string
+            is_private:
+              type: boolean
+            items:
+              type: array
+            from_account_id:
+              type: integer
+            to_account_id:
+              type: integer
+          required:
+            - date
+            - amount
+    responses:
+      200:
+        description: Updated transaction or transfer
+      400:
+        description: Validation error
+      403:
+        description: Unauthorized
+      404:
+        description: Transaction not found
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -562,7 +997,32 @@ def update_transaction(tx_id):
         if old_transfer is None:
             cursor.close()
             release_connection(conn)
-            return jsonify({"error": "Transfer not found"}), 404
+            return jsonify({"error": "انتقال یافت نشد"}), 404
+
+        # Check transfer permission
+        can_modify = False
+        for wid in [old_transfer.get("from_wallet_id"), old_transfer.get("to_wallet_id")]:
+            if wid is None:
+                continue
+            cursor.execute(
+                "SELECT user_id, wallet_type FROM wallets WHERE id = %s AND deleted_at IS NULL", (wid,)
+            )
+            w = cursor.fetchone()
+            if w and w["user_id"] == user_id:
+                can_modify = True
+                break
+            if w and w["wallet_type"] == "shared":
+                cursor.execute(
+                    "SELECT role FROM wallet_members WHERE wallet_id = %s AND user_id = %s", (wid, user_id)
+                )
+                m = cursor.fetchone()
+                if m and m["role"] in ("owner", "editor"):
+                    can_modify = True
+                    break
+        if not can_modify:
+            cursor.close()
+            release_connection(conn)
+            return jsonify({"error": "دسترسی غیرمجاز"}), 403
 
         if is_transfer:
             try:
@@ -583,17 +1043,19 @@ def update_transaction(tx_id):
             cursor.execute(
                 """
                 UPDATE transfers
-                SET from_source_id = %s, to_source_id = %s, amount = %s, date = %s, notes = %s
-                WHERE id = %s AND user_id = %s
+                SET from_wallet_id = %s, to_wallet_id = %s, from_account_id = %s, to_account_id = %s,
+                    amount = %s, date = %s, notes = %s
+                WHERE id = %s
                 """,
                 (
-                    payload["from_source_id"],
-                    payload["to_source_id"],
+                    payload["from_wallet_id"],
+                    payload["to_wallet_id"],
+                    payload.get("from_account_id"),
+                    payload.get("to_account_id"),
                     payload["amount"],
                     payload["date"],
                     payload["notes"],
                     tx_id,
-                    user_id,
                 ),
             )
             _apply_transfer_effect(cursor, payload, user_id)
@@ -609,6 +1071,9 @@ def update_transaction(tx_id):
             release_connection(conn)
             return jsonify({"error": str(exc)}), 400
 
+        account_id = data.get("account_id")
+        is_private = bool(data.get("is_private", False))
+
         err_response, new_type = _validate_transaction_business_rules(
             cursor, user_id, payload, old_transfer=old_transfer
         )
@@ -620,13 +1085,19 @@ def update_transaction(tx_id):
 
         _reverse_transfer_effect(cursor, old_transfer, user_id)
         cursor.execute(
-            "UPDATE transfers SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
-            (tx_id, user_id),
+            "UPDATE transfers SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s AND deleted_at IS NULL",
+            (tx_id,),
         )
+
+        if account_id:
+            wallet_id = _get_account_wallet_id(cursor, account_id)
+        else:
+            wallet_id = payload.get("wallet_id")
+
         cursor.execute(
             """
-            INSERT INTO transactions (user_id, date, amount, category_id, source_id, description)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO transactions (user_id, date, amount, category_id, wallet_id, account_id, description, is_private)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -634,12 +1105,18 @@ def update_transaction(tx_id):
                 payload["date"],
                 payload["amount"],
                 payload["category_id"],
-                payload.get("source_id"),
+                wallet_id,
+                account_id,
                 payload["description"],
+                is_private,
             ),
         )
         new_id = cursor.fetchone()['id']
-        _adjust_source_amount(cursor, payload.get("source_id"), user_id, payload["amount"], new_type)
+
+        if account_id:
+            _adjust_account_amount(cursor, account_id, payload["amount"], new_type)
+        else:
+            _adjust_wallet_amount(cursor, wallet_id, user_id, payload["amount"], new_type)
         conn.commit()
         cursor.close()
         release_connection(conn)
@@ -649,7 +1126,12 @@ def update_transaction(tx_id):
     if old_transaction is None:
         cursor.close()
         release_connection(conn)
-        return jsonify({"error": "Transaction not found"}), 404
+        return jsonify({"error": "تراکنش یافت نشد"}), 404
+
+    if not _can_modify_transaction(cursor, old_transaction, user_id):
+        cursor.close()
+        release_connection(conn)
+        return jsonify({"error": "دسترسی غیرمجاز"}), 403
 
     if is_transfer:
         try:
@@ -668,19 +1150,21 @@ def update_transaction(tx_id):
 
         _reverse_transaction_effect(cursor, old_transaction, user_id)
         cursor.execute(
-            "UPDATE transactions SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
-            (tx_id, user_id),
+            "UPDATE transactions SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s AND deleted_at IS NULL",
+            (tx_id,),
         )
         cursor.execute(
             """
-            INSERT INTO transfers (user_id, from_source_id, to_source_id, amount, date, notes)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO transfers (user_id, from_wallet_id, to_wallet_id, from_account_id, to_account_id, amount, date, notes)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
                 user_id,
-                payload["from_source_id"],
-                payload["to_source_id"],
+                payload["from_wallet_id"],
+                payload["to_wallet_id"],
+                payload.get("from_account_id"),
+                payload.get("to_account_id"),
                 payload["amount"],
                 payload["date"],
                 payload["notes"],
@@ -716,7 +1200,7 @@ def update_transaction(tx_id):
                 cursor.close()
                 release_connection(conn)
                 return jsonify({
-                    "error": "Sum of item prices does not match transaction amount",
+                    "error": "مجموع قیمت اقلام با مبلغ تراکنش مطابقت ندارد",
                     "items_sum": items_sum,
                     "transaction_amount": payload["amount"],
                 }), 400
@@ -730,22 +1214,33 @@ def update_transaction(tx_id):
         release_connection(conn)
         return err_response, status_code
 
+    # Resolve account_id
+    account_id = data.get("account_id") or old_transaction.get("account_id")
+    is_private = data.get("is_private", old_transaction.get("is_private", False))
+
+    if account_id:
+        wallet_id = _get_account_wallet_id(cursor, account_id)
+    else:
+        wallet_id = payload.get("wallet_id")
+
     try:
         _reverse_transaction_effect(cursor, old_transaction, user_id)
         cursor.execute(
             """
             UPDATE transactions
-            SET date = %s, amount = %s, category_id = %s, source_id = %s, description = %s
-            WHERE id = %s AND user_id = %s
+            SET date = %s, amount = %s, category_id = %s, wallet_id = %s, account_id = %s,
+                description = %s, is_private = %s
+            WHERE id = %s
             """,
             (
                 payload["date"],
                 payload["amount"],
                 payload["category_id"],
-                payload.get("source_id"),
+                wallet_id,
+                account_id,
                 payload["description"],
+                is_private,
                 tx_id,
-                user_id,
             ),
         )
         # Replace items if provided
@@ -754,7 +1249,11 @@ def update_transaction(tx_id):
             TransactionItemService.soft_delete_items_by_transaction(cursor, tx_id)
             if items:
                 inserted_items = TransactionItemService.create_items(cursor, tx_id, items)
-        _adjust_source_amount(cursor, payload.get("source_id"), user_id, payload["amount"], new_type)
+
+        if account_id:
+            _adjust_account_amount(cursor, account_id, payload["amount"], new_type)
+        else:
+            _adjust_wallet_amount(cursor, wallet_id, user_id, payload["amount"], new_type)
         conn.commit()
     except Exception as exc:
         conn.rollback()
@@ -773,6 +1272,32 @@ def update_transaction(tx_id):
 
 @bp.route("/<int:tx_id>", methods=["DELETE"])
 def delete_transaction(tx_id):
+    """Soft-delete a transaction or transfer. Reverses balance effects.
+    ---
+    tags:
+      - Transactions
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: tx_id
+        in: path
+        type: integer
+        required: true
+      - name: record_type
+        in: query
+        type: string
+        enum: [transaction, transfer]
+        description: Hint for the record type to delete
+    responses:
+      200:
+        description: Transaction archived
+      403:
+        description: Unauthorized
+      404:
+        description: Transaction not found
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -781,10 +1306,14 @@ def delete_transaction(tx_id):
     record_type = request.args.get("record_type", "").strip().lower()
     old = None if record_type == "transfer" else _get_transaction_row(cursor, tx_id, user_id)
     if old is not None:
+        if not _can_modify_transaction(cursor, old, user_id):
+            cursor.close()
+            release_connection(conn)
+            return jsonify({"error": "دسترسی غیرمجاز"}), 403
         _reverse_transaction_effect(cursor, old, user_id)
         cursor.execute(
-            "UPDATE transactions SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
-            (tx_id, user_id),
+            "UPDATE transactions SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s AND deleted_at IS NULL",
+            (tx_id,),
         )
         conn.commit()
         cursor.close()
@@ -795,12 +1324,41 @@ def delete_transaction(tx_id):
     if old_transfer is None:
         cursor.close()
         release_connection(conn)
-        return jsonify({"error": "Transaction not found"}), 404
+        return jsonify({"error": "تراکنش یافت نشد"}), 404
+
+    # Check transfer permission — must be owner of at least one wallet
+    from_wallet_id = old_transfer.get("from_wallet_id")
+    to_wallet_id = old_transfer.get("to_wallet_id")
+    can_modify = False
+    for wid in [from_wallet_id, to_wallet_id]:
+        if wid is None:
+            continue
+        cursor.execute(
+            "SELECT user_id, wallet_type FROM wallets WHERE id = %s AND deleted_at IS NULL",
+            (wid,)
+        )
+        w = cursor.fetchone()
+        if w and w["user_id"] == user_id:
+            can_modify = True
+            break
+        if w and w["wallet_type"] == "shared":
+            cursor.execute(
+                "SELECT role FROM wallet_members WHERE wallet_id = %s AND user_id = %s",
+                (wid, user_id)
+            )
+            m = cursor.fetchone()
+            if m and m["role"] in ("owner", "editor"):
+                can_modify = True
+                break
+    if not can_modify:
+        cursor.close()
+        release_connection(conn)
+        return jsonify({"error": "دسترسی غیرمجاز"}), 403
 
     _reverse_transfer_effect(cursor, old_transfer, user_id)
     cursor.execute(
-        "UPDATE transfers SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
-        (tx_id, user_id),
+        "UPDATE transfers SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s AND deleted_at IS NULL",
+        (tx_id,),
     )
     conn.commit()
     cursor.close()
@@ -812,19 +1370,46 @@ def delete_transaction(tx_id):
 
 
 def _get_transaction_for_items(cursor, tx_id, user_id):
-    """Fetch transaction row and verify ownership. Returns (row, error_response)."""
+    """Fetch transaction row and verify access (owner or wallet member). Returns (row, error_response)."""
     cursor.execute(
-        "SELECT * FROM transactions WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
-        (tx_id, user_id),
+        "SELECT * FROM transactions WHERE id = %s AND deleted_at IS NULL"
+        " AND ("
+        "   (wallet_id IS NULL AND user_id = %s)"
+        "   OR wallet_id IN ("
+        "     SELECT id FROM wallets WHERE user_id = %s AND deleted_at IS NULL"
+        "     UNION"
+        "     SELECT wallet_id FROM wallet_members WHERE user_id = %s"
+        "   )"
+        " )",
+        (tx_id, user_id, user_id, user_id),
     )
     row = cursor.fetchone()
     if row is None:
-        return None, (jsonify({"error": "Transaction not found"}), 404)
+        return None, (jsonify({"error": "تراکنش یافت نشد"}), 404)
     return row, None
 
 
 @bp.route("/<int:tx_id>/items", methods=["GET"])
 def list_transaction_items(tx_id):
+    """List all items for a transaction.
+    ---
+    tags:
+      - Transaction Items
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: tx_id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: List of transaction items
+      404:
+        description: Transaction not found
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -843,6 +1428,48 @@ def list_transaction_items(tx_id):
 
 @bp.route("/<int:tx_id>/items", methods=["POST"])
 def add_transaction_item(tx_id):
+    """Add a new item to a transaction.
+    ---
+    tags:
+      - Transaction Items
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: tx_id
+        in: path
+        type: integer
+        required: true
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          properties:
+            name:
+              type: string
+            quantity:
+              type: number
+            unit_price:
+              type: number
+            total_price:
+              type: number
+            description:
+              type: string
+          required:
+            - name
+            - quantity
+            - unit_price
+            - total_price
+    responses:
+      201:
+        description: Item created successfully
+      400:
+        description: Validation error
+      404:
+        description: Transaction not found
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -877,6 +1504,52 @@ def add_transaction_item(tx_id):
 
 @bp.route("/<int:tx_id>/items/<int:item_id>", methods=["PUT"])
 def update_transaction_item(tx_id, item_id):
+    """Update an existing transaction item.
+    ---
+    tags:
+      - Transaction Items
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: tx_id
+        in: path
+        type: integer
+        required: true
+      - name: item_id
+        in: path
+        type: integer
+        required: true
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          properties:
+            name:
+              type: string
+            quantity:
+              type: number
+            unit_price:
+              type: number
+            total_price:
+              type: number
+            description:
+              type: string
+          required:
+            - name
+            - quantity
+            - unit_price
+            - total_price
+    responses:
+      200:
+        description: Updated item
+      400:
+        description: Validation error
+      404:
+        description: Item not found
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -899,7 +1572,7 @@ def update_transaction_item(tx_id, item_id):
     if existing is None or existing["transaction_id"] != tx_id:
         cursor.close()
         release_connection(conn)
-        return jsonify({"error": "Item not found"}), 404
+        return jsonify({"error": "قلم یافت نشد"}), 404
 
     cursor.close()
     release_connection(conn)
@@ -916,6 +1589,29 @@ def update_transaction_item(tx_id, item_id):
 
 @bp.route("/<int:tx_id>/items/<int:item_id>", methods=["DELETE"])
 def delete_transaction_item(tx_id, item_id):
+    """Soft-delete a transaction item.
+    ---
+    tags:
+      - Transaction Items
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: tx_id
+        in: path
+        type: integer
+        required: true
+      - name: item_id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: Item archived
+      404:
+        description: Item not found
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -932,7 +1628,7 @@ def delete_transaction_item(tx_id, item_id):
     if existing is None or existing["transaction_id"] != tx_id:
         cursor.close()
         release_connection(conn)
-        return jsonify({"error": "Item not found"}), 404
+        return jsonify({"error": "قلم یافت نشد"}), 404
 
     cursor.close()
     release_connection(conn)
@@ -952,6 +1648,23 @@ def delete_transaction_item(tx_id, item_id):
 
 @bp.route("/items/most-purchased", methods=["GET"])
 def most_purchased_items():
+    """Get the most frequently purchased items.
+    ---
+    tags:
+      - Transaction Items
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: limit
+        in: query
+        type: integer
+        default: 10
+    responses:
+      200:
+        description: List of most purchased items
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -962,25 +1675,67 @@ def most_purchased_items():
 
 @bp.route("/items/search", methods=["GET"])
 def search_items():
+    """Search transaction items by name.
+    ---
+    tags:
+      - Transaction Items
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: q
+        in: query
+        type: string
+        required: true
+        description: Search query string
+    responses:
+      200:
+        description: Matching items
+      400:
+        description: Missing search query
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
     q = request.args.get("q", "").strip()
     if not q:
-        return jsonify({"error": "Search query 'q' is required"}), 400
+        return jsonify({"error": "جستجو با پارامتر 'q' الزامی است"}), 400
     results = TransactionItemService.search_items(user_id, q)
     return jsonify(results)
 
 
 @bp.route("/items/stats", methods=["GET"])
 def item_stats():
+    """Get statistics for a specific item by name.
+    ---
+    tags:
+      - Transaction Items
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: name
+        in: query
+        type: string
+        required: true
+        description: Item name to get stats for
+    responses:
+      200:
+        description: Item statistics
+      400:
+        description: Missing item name
+      404:
+        description: Item not found
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
     name = request.args.get("name", "").strip()
     if not name:
-        return jsonify({"error": "Item name 'name' is required"}), 400
+        return jsonify({"error": "نام قلم با پارامتر 'name' الزامی است"}), 400
     stats = TransactionItemService.get_item_stats(user_id, name)
     if stats is None:
-        return jsonify({"error": "No items found with that name"}), 404
+        return jsonify({"error": "قلمی با این نام یافت نشد"}), 404
     return jsonify(stats)

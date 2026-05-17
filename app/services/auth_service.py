@@ -1,3 +1,4 @@
+import math
 import pyotp
 from werkzeug.security import generate_password_hash, check_password_hash
 from database import get_connection, release_connection
@@ -12,7 +13,7 @@ class AuthService:
         try:
             cursor.execute("SELECT id FROM users WHERE username = %s", (username,))
             if cursor.fetchone():
-                return None, "Username already exists"
+                return None, "نام کاربری قبلاً ثبت شده است"
 
             # First user in the system is auto-approved and auto-promoted to admin
             cursor.execute("SELECT COUNT(*) AS cnt FROM users")
@@ -55,13 +56,13 @@ class AuthService:
             row = cursor.fetchone()
 
             if row is None or not check_password_hash(row["password_hash"], password):
-                return None, "Invalid username or password"
+                return None, "نام کاربری یا رمز عبور اشتباه است"
 
             if not row["is_approved"]:
-                return None, "Your account is pending admin approval. Please wait for approval before logging in."
+                return None, "حساب شما در انتظار تایید مدیر است"
 
             if not row.get("is_active", True):
-                return None, "Your account has been deactivated. Please contact an admin."
+                return None, "حساب شما غیرفعال شده است"
 
             return {
                 "id": row["id"],
@@ -86,7 +87,7 @@ class AuthService:
             row = cursor.fetchone()
 
             if row is None:
-                return None, "User not found"
+                return None, "کاربر یافت نشد"
 
             return dict(row), None
         finally:
@@ -94,15 +95,30 @@ class AuthService:
             release_connection(conn)
 
     @staticmethod
-    def get_pending_users():
+    def get_pending_users(page=1, per_page=20):
         conn = get_connection()
         cursor = conn.cursor()
 
         try:
+            count_sql = "SELECT COUNT(*) as total FROM users WHERE is_approved = FALSE"
+            cursor.execute(count_sql)
+            total = cursor.fetchone()["total"]
+
+            offset = (page - 1) * per_page
             cursor.execute(
-                "SELECT id, username, display_name, email, created_at FROM users WHERE is_approved = FALSE ORDER BY created_at DESC"
+                "SELECT id, username, display_name, email, created_at FROM users WHERE is_approved = FALSE ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                (per_page, offset)
             )
-            return [dict(row) for row in cursor.fetchall()], None
+            rows = [dict(row) for row in cursor.fetchall()]
+
+            total_pages = math.ceil(total / per_page) if per_page > 0 else 0
+            return {
+                "items": rows,
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": total_pages,
+            }, None
         finally:
             cursor.close()
             release_connection(conn)
@@ -119,7 +135,7 @@ class AuthService:
             )
             row = cursor.fetchone()
             if row is None:
-                return None, "User not found or already approved"
+                return None, "کاربر یافت نشد یا قبلاً تایید شده است"
             conn.commit()
             return {"id": row["id"], "username": row["username"]}, None
         except Exception as e:
@@ -141,7 +157,7 @@ class AuthService:
             )
             row = cursor.fetchone()
             if row is None:
-                return None, "User not found, already approved, or is an admin"
+                return None, "کاربر یافت نشد، قبلاً تایید شده، یا مدیر است"
             conn.commit()
             return {"id": row["id"], "username": row["username"]}, None
         except Exception as e:
@@ -167,16 +183,31 @@ class AuthService:
             release_connection(conn)
 
     @staticmethod
-    def get_all_users():
+    def get_all_users(page=1, per_page=20):
         conn = get_connection()
         cursor = conn.cursor()
 
         try:
+            count_sql = "SELECT COUNT(*) as total FROM users"
+            cursor.execute(count_sql)
+            total = cursor.fetchone()["total"]
+
+            offset = (page - 1) * per_page
             cursor.execute(
                 """SELECT id, username, display_name, email, is_admin, is_approved, is_active, created_at
-                   FROM users ORDER BY created_at DESC"""
+                   FROM users ORDER BY created_at DESC LIMIT %s OFFSET %s""",
+                (per_page, offset)
             )
-            return [dict(row) for row in cursor.fetchall()], None
+            rows = [dict(row) for row in cursor.fetchall()]
+
+            total_pages = math.ceil(total / per_page) if per_page > 0 else 0
+            return {
+                "items": rows,
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": total_pages,
+            }, None
         finally:
             cursor.close()
             release_connection(conn)
@@ -193,7 +224,7 @@ class AuthService:
             )
             row = cursor.fetchone()
             if row is None:
-                return None, "User not found or already active"
+                return None, "کاربر یافت نشد یا قبلاً فعال است"
             conn.commit()
             return {"id": row["id"], "username": row["username"]}, None
         except Exception as e:
@@ -215,7 +246,7 @@ class AuthService:
             )
             row = cursor.fetchone()
             if row is None:
-                return None, "User not found, already inactive, or is an admin"
+                return None, "کاربر یافت نشد، قبلاً غیرفعال است، یا مدیر است"
             conn.commit()
             return {"id": row["id"], "username": row["username"]}, None
         except Exception as e:
@@ -234,7 +265,7 @@ class AuthService:
         try:
             cursor.execute("SELECT id FROM users WHERE username = %s", (username,))
             if cursor.fetchone():
-                return None, "Username already exists"
+                return None, "نام کاربری قبلاً ثبت شده است"
 
             password_hash = generate_password_hash(password)
             cursor.execute(
@@ -273,7 +304,7 @@ class AuthService:
             )
             row = cursor.fetchone()
             if row is None:
-                return None, "User not found"
+                return None, "کاربر یافت نشد"
             return dict(row), None
         finally:
             cursor.close()
@@ -289,7 +320,7 @@ class AuthService:
             cursor.execute("SELECT id, is_admin FROM users WHERE id = %s", (user_id,))
             row = cursor.fetchone()
             if row is None:
-                return None, "User not found"
+                return None, "کاربر یافت نشد"
 
             updates = []
             params = []
@@ -339,14 +370,14 @@ class AuthService:
             cursor.execute("SELECT id, username, is_admin FROM users WHERE id = %s", (user_id,))
             row = cursor.fetchone()
             if row is None:
-                return None, "User not found"
+                return None, "کاربر یافت نشد"
             if row["is_admin"]:
-                return None, "Cannot delete an admin user"
+                return None, "امکان حذف کاربر مدیر وجود ندارد"
 
             cursor.execute("DELETE FROM users WHERE id = %s AND is_admin = FALSE RETURNING id, username", (user_id,))
             deleted = cursor.fetchone()
             if deleted is None:
-                return None, "Cannot delete an admin user"
+                return None, "امکان حذف کاربر مدیر وجود ندارد"
             conn.commit()
             return {"id": deleted["id"], "username": deleted["username"]}, None
         except Exception as e:
@@ -369,7 +400,7 @@ class AuthService:
         """Verify the OTP code, then save the secret and enable 2FA."""
         totp = pyotp.TOTP(secret)
         if not totp.verify(code):
-            return None, "Invalid verification code"
+            return None, "کد تأیید نامعتبر است"
         conn = get_connection()
         cursor = conn.cursor()
         try:
@@ -417,10 +448,10 @@ class AuthService:
             )
             row = cursor.fetchone()
             if not row or not row.get("totp_enabled") or not row.get("totp_secret"):
-                return None, "2FA not enabled for this user"
+                return None, "احراز هویت دو مرحله‌ای برای این کاربر فعال نیست"
             totp = pyotp.TOTP(row["totp_secret"])
             if not totp.verify(code):
-                return None, "Invalid verification code"
+                return None, "کد تأیید نامعتبر است"
             return {"message": "Verified"}, None
         finally:
             cursor.close()

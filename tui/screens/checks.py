@@ -385,8 +385,8 @@ class CheckAddScreen(Screen):
                 )
                 yield Label("Category:")
                 yield Select([], prompt="Loading...", id="chk_category")
-                yield Label("Source (optional):")
-                yield Select([], prompt="Loading...", id="chk_source")
+                yield Label("Wallet (optional):")
+                yield Select([], prompt="Loading...", id="chk_wallet")
                 yield Label("Description (optional):")
                 yield TextArea(id="chk_desc")
             with Horizontal(classes="button_row"):
@@ -400,7 +400,7 @@ class CheckAddScreen(Screen):
 
     def on_mount(self) -> None:
         self._load_categories()
-        self._load_sources()
+        self._load_wallets()
 
     def _load_categories(self):
         resp = api_get("/categories", username=self.app.user.get("username"))
@@ -414,17 +414,17 @@ class CheckAddScreen(Screen):
             select.set_options(options)
             select.prompt = "Select category"
 
-    def _load_sources(self):
-        resp = api_get("/sources", username=self.app.user.get("username"))
+    def _load_wallets(self):
+        resp = api_get("/wallets", username=self.app.user.get("username"))
         data, err = handle_response(resp)
-        select = self.query_one("#chk_source", Select)
+        select = self.query_one("#chk_wallet", Select)
         if err or not data:
             select.set_options([])
-            select.prompt = "No sources"
+            select.prompt = "No wallets"
         else:
             options = [(s["name"], s["id"]) for s in data]
             select.set_options(options)
-            select.prompt = "Select source"
+            select.prompt = "Select wallet"
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
@@ -443,7 +443,7 @@ class CheckAddScreen(Screen):
         due_date = self.query_one("#chk_due_date", Input).value.strip()
         chk_type = self.query_one("#chk_type", Select).value
         category_id = self.query_one("#chk_category", Select).value
-        source_id = self.query_one("#chk_source", Select).value
+        wallet_id = self.query_one("#chk_wallet", Select).value
         desc = self.query_one("#chk_desc", TextArea).text.strip() or None
 
         if not amount_str:
@@ -483,7 +483,7 @@ class CheckAddScreen(Screen):
             "due_date": due_gregorian,
             "type": str(chk_type),
             "category_id": category_id,
-            "source_id": source_id if source_id is not None and source_id != Select.BLANK else None,
+            "wallet_id": wallet_id if wallet_id is not None and wallet_id != Select.BLANK else None,
             "description": desc,
         }
         resp = api_post("/checks", payload, username=self.app.user.get("username"))
@@ -499,7 +499,7 @@ class CheckAddScreen(Screen):
             self.query_one("#chk_due_date", Input).value = ""
             self.query_one("#chk_type", Select).clear()
             self.query_one("#chk_category", Select).clear()
-            self.query_one("#chk_source", Select).clear()
+            self.query_one("#chk_wallet", Select).clear()
             self.query_one("#chk_desc", TextArea).load_text("")
 
 
@@ -534,8 +534,8 @@ class CheckEditScreen(Screen):
                 yield Input(id="chk_type", disabled=True)
                 yield Label("Category:")
                 yield Input(id="chk_category", disabled=True)
-                yield Label("Source:")
-                yield Input(id="chk_source", disabled=True)
+                yield Label("Wallet:")
+                yield Input(id="chk_wallet", disabled=True)
                 yield Label("Status:")
                 yield Input(id="chk_status", disabled=True)
                 yield Label("Description (optional):")
@@ -565,7 +565,7 @@ class CheckEditScreen(Screen):
         self.query_one("#chk_due_date", Input).value = due_jalali
         self.query_one("#chk_type", Input).value = data.get("type", "")
         self.query_one("#chk_category", Input).value = str(data.get("category_id", ""))
-        self.query_one("#chk_source", Input).value = str(data.get("source_id") or "")
+        self.query_one("#chk_wallet", Input).value = str(data.get("wallet_id") or "")
         self.query_one("#chk_status", Input).value = data.get("status", "")
         self.query_one("#chk_desc", TextArea).load_text(data.get("description") or "")
 

@@ -12,6 +12,7 @@ from app.services.reporting_service import (
 )
 from app.services.item_report_service import ItemReportService
 from app.utils.helpers import get_user_id_from_request
+from services.forecast_service import ForecastService
 
 bp = Blueprint('reports', __name__)
 
@@ -22,6 +23,26 @@ def _current_jalali_date() -> jdatetime.date:
 
 @bp.route("/daily", methods=["GET"])
 def daily_report():
+    """Get daily financial report.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: date
+        in: query
+        type: string
+        description: Jalali date (YYYY-MM-DD)
+      - name: wallet_id
+        in: query
+        type: integer
+    responses:
+      200:
+        description: Daily report summary
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -30,8 +51,10 @@ def daily_report():
     if not date:
         date = _current_jalali_date().strftime("%Y-%m-%d")
 
+    wallet_id = request.args.get("wallet_id", type=int)
+
     try:
-        report = get_daily_report(user_id, date)
+        report = get_daily_report(user_id, date, wallet_id=wallet_id)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(asdict(report))
@@ -39,6 +62,26 @@ def daily_report():
 
 @bp.route("/weekly", methods=["GET"])
 def weekly_report():
+    """Get weekly financial report.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: start_date
+        in: query
+        type: string
+        description: Jalali start date (YYYY-MM-DD)
+      - name: wallet_id
+        in: query
+        type: integer
+    responses:
+      200:
+        description: Weekly report summary
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -48,8 +91,10 @@ def weekly_report():
         current = _current_jalali_date()
         start_date = (current - timedelta(days=current.weekday() + 2)).strftime("%Y-%m-%d")
 
+    wallet_id = request.args.get("wallet_id", type=int)
+
     try:
-        report = get_weekly_report(user_id, start_date)
+        report = get_weekly_report(user_id, start_date, wallet_id=wallet_id)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(asdict(report))
@@ -57,6 +102,28 @@ def weekly_report():
 
 @bp.route("/monthly", methods=["GET"])
 def monthly_report():
+    """Get monthly financial report.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: year
+        in: query
+        type: integer
+      - name: month
+        in: query
+        type: integer
+      - name: wallet_id
+        in: query
+        type: integer
+    responses:
+      200:
+        description: Monthly report summary
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -64,9 +131,10 @@ def monthly_report():
     current = _current_jalali_date()
     year = request.args.get("year", type=int) or current.year
     month = request.args.get("month", type=int) or current.month
+    wallet_id = request.args.get("wallet_id", type=int)
 
     try:
-        report = get_monthly_report(user_id, year, month)
+        report = get_monthly_report(user_id, year, month, wallet_id=wallet_id)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(asdict(report))
@@ -74,11 +142,28 @@ def monthly_report():
 
 @bp.route("/transactions/summary", methods=["GET"])
 def transactions_summary():
+    """Get current month transaction summary.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: wallet_id
+        in: query
+        type: integer
+    responses:
+      200:
+        description: Income, cost, and balance for current month
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
     current = _current_jalali_date()
-    report = ReportingService.get_monthly_report(user_id, current.year, current.month)
+    wallet_id = request.args.get("wallet_id", type=int)
+    report = ReportingService.get_monthly_report(user_id, current.year, current.month, wallet_id=wallet_id)
     return jsonify(
         {
             "total_income": report.summary.total_income,
@@ -90,11 +175,28 @@ def transactions_summary():
 
 @bp.route("/transactions/category", methods=["GET"])
 def report_by_category():
+    """Get current month expenses grouped by category.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: wallet_id
+        in: query
+        type: integer
+    responses:
+      200:
+        description: Category breakdown for current month
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
     current = _current_jalali_date()
-    report = ReportingService.get_monthly_report(user_id, current.year, current.month)
+    wallet_id = request.args.get("wallet_id", type=int)
+    report = ReportingService.get_monthly_report(user_id, current.year, current.month, wallet_id=wallet_id)
     return jsonify(
         [
             {
@@ -110,6 +212,22 @@ def report_by_category():
 
 @bp.route("/transactions/monthly", methods=["GET"])
 def report_by_month():
+    """Get last 6 months transaction trend.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: wallet_id
+        in: query
+        type: integer
+    responses:
+      200:
+        description: Monthly income, cost, and balance for last 6 months
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -118,8 +236,9 @@ def report_by_month():
     results = []
     year = current.year
     month = current.month
+    wallet_id = request.args.get("wallet_id", type=int)
     for _ in range(6):
-        report = ReportingService.get_monthly_report(user_id, year, month)
+        report = ReportingService.get_monthly_report(user_id, year, month, wallet_id=wallet_id)
         results.append(
             {
                 "month": report.month_label,
@@ -139,11 +258,28 @@ def report_by_month():
 
 @bp.route("/transactions/category-chart", methods=["GET"])
 def report_category_chart():
+    """Get category chart data for current month.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: wallet_id
+        in: query
+        type: integer
+    responses:
+      200:
+        description: Category spending data for charting
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
     current = _current_jalali_date()
-    report = ReportingService.get_monthly_report(user_id, current.year, current.month)
+    wallet_id = request.args.get("wallet_id", type=int)
+    report = ReportingService.get_monthly_report(user_id, current.year, current.month, wallet_id=wallet_id)
     return jsonify(
         [
             {
@@ -159,6 +295,28 @@ def report_category_chart():
 
 @bp.route("/budget", methods=["GET"])
 def budget_report():
+    """Get budget performance report for a month.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: year
+        in: query
+        type: integer
+      - name: month
+        in: query
+        type: integer
+      - name: wallet_id
+        in: query
+        type: integer
+    responses:
+      200:
+        description: Budget vs actual spending per category
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -166,9 +324,10 @@ def budget_report():
     current = _current_jalali_date()
     year = request.args.get("year", type=int) or current.year
     month = request.args.get("month", type=int) or current.month
+    wallet_id = request.args.get("wallet_id", type=int)
 
     try:
-        report = ReportingService.get_monthly_report(user_id, year, month)
+        report = ReportingService.get_monthly_report(user_id, year, month, wallet_id=wallet_id)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -197,7 +356,23 @@ def budget_report():
 
 @bp.route("/items/top", methods=["GET"])
 def item_top_purchased():
-    """Top purchased items ranked by total spent."""
+    """Top purchased items ranked by total spent.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: limit
+        in: query
+        type: integer
+        default: 20
+    responses:
+      200:
+        description: List of top purchased items
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -211,13 +386,33 @@ def item_top_purchased():
 
 @bp.route("/items/price-history", methods=["GET"])
 def item_price_history():
-    """Chronological price history for a specific item."""
+    """Chronological price history for a specific item.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: name
+        in: query
+        type: string
+        required: true
+      - name: limit
+        in: query
+        type: integer
+        default: 50
+    responses:
+      200:
+        description: Price history entries
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
     name = request.args.get("name", "").strip()
     if not name:
-        return jsonify({"error": "Query parameter 'name' is required"}), 400
+        return jsonify({"error": "پارامتر 'name' الزامی است"}), 400
     limit = request.args.get("limit", 50, type=int)
     try:
         result = ItemReportService.get_price_history(user_id, name, limit=limit)
@@ -228,7 +423,23 @@ def item_price_history():
 
 @bp.route("/items/monthly-basket", methods=["GET"])
 def item_monthly_basket():
-    """Monthly item basket: items bought each month with quantities and costs."""
+    """Monthly item basket: items bought each month with quantities and costs.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: months
+        in: query
+        type: integer
+        default: 6
+    responses:
+      200:
+        description: Monthly basket breakdown
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -242,7 +453,23 @@ def item_monthly_basket():
 
 @bp.route("/items/by-category", methods=["GET"])
 def item_by_category():
-    """Items aggregated by transaction category."""
+    """Items aggregated by transaction category.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: limit
+        in: query
+        type: integer
+        default: 50
+    responses:
+      200:
+        description: Items grouped by category
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -256,7 +483,23 @@ def item_by_category():
 
 @bp.route("/items/velocity", methods=["GET"])
 def item_velocity():
-    """Spending velocity: consumption speed and next-purchase predictions."""
+    """Spending velocity: consumption speed and next-purchase predictions.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: min_purchases
+        in: query
+        type: integer
+        default: 3
+    responses:
+      200:
+        description: Spending velocity data
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -270,7 +513,22 @@ def item_velocity():
 
 @bp.route("/items/price-comparison", methods=["GET"])
 def item_price_comparison():
-    """Source-based price comparison for items."""
+    """Wallet-based price comparison for items.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: name
+        in: query
+        type: string
+    responses:
+      200:
+        description: Price comparison across wallets
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -287,7 +545,27 @@ def item_price_comparison():
 
 @bp.route("/inflation/personal", methods=["GET"])
 def personal_inflation():
-    """Personal CPI-like inflation index based on transaction items."""
+    """Personal CPI-like inflation index based on transaction items.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: period_months
+        in: query
+        type: integer
+        default: 3
+      - name: min_purchases
+        in: query
+        type: integer
+        default: 2
+    responses:
+      200:
+        description: Personal inflation index
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -304,7 +582,27 @@ def personal_inflation():
 
 @bp.route("/inflation/spikes", methods=["GET"])
 def price_spikes():
-    """Detect items with price spikes above threshold."""
+    """Detect items with price spikes above threshold.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: threshold
+        in: query
+        type: number
+        default: 0.3
+      - name: lookback_months
+        in: query
+        type: integer
+        default: 3
+    responses:
+      200:
+        description: Items with significant price spikes
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -321,7 +619,23 @@ def price_spikes():
 
 @bp.route("/items/best-stores", methods=["GET"])
 def best_stores():
-    """For each item, find the source with the lowest average price."""
+    """For each item, find the wallet with the lowest average price.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: limit
+        in: query
+        type: integer
+        default: 20
+    responses:
+      200:
+        description: Best store per item
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -329,5 +643,38 @@ def best_stores():
     try:
         result = ItemReportService.get_best_stores(user_id, limit=limit)
         return jsonify(result)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+# ── Cashflow Forecast ─────────────────────────────────────────────────
+
+
+@bp.route("/forecast", methods=["GET"])
+def forecast():
+    """Projected cashflow forecast for the next 30 days.
+    ---
+    tags:
+      - Reports
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: period_days
+        in: query
+        type: integer
+        default: 30
+    responses:
+      200:
+        description: Cashflow forecast projection
+    """
+    user_id, err = get_user_id_from_request()
+    if err:
+        return err
+    period_days = request.args.get("period_days", 30, type=int)
+    try:
+        report = ForecastService.forecast_balance(user_id, period_days=period_days)
+        return jsonify(ForecastService.to_dict(report))
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
