@@ -8,7 +8,7 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Button, DataTable, Input, Label, Rule, Static
+from textual.widgets import Button, DataTable, Input, Label, Static
 
 from tui.api import format_toman
 
@@ -123,7 +123,6 @@ class TransactionItemsModal(ModalScreen):
     def compose(self) -> ComposeResult:
         with Container(classes="items_dialog"):
             yield Label("TRANSACTION ITEMS", classes="dialog_title")
-            yield Rule()
             with Horizontal(classes="items_input_row"):
                 yield Input(placeholder="Name", id="item_name")
                 yield Input(placeholder="Qty", id="item_qty")
@@ -135,7 +134,6 @@ class TransactionItemsModal(ModalScreen):
             with Horizontal(classes="items_action_row"):
                 yield Button("Remove", variant="error", id="remove_item_btn")
                 yield Static("No items.", id="items_total")
-            yield Rule()
             with Horizontal(classes="dialog_buttons"):
                 yield Button("Done", variant="primary", id="done")
                 yield Button("Cancel", variant="default", id="cancel_btn")

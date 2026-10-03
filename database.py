@@ -335,6 +335,161 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_transfers_to_source ON transfers(to_source_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_transfers_date ON transfers(date)")
 
+        # ── Debts & Receivables ────────────────────────────────────
+
+        # Main debts table (receivables + payables)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS debts (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                type VARCHAR(20) NOT NULL CHECK(type IN ('receivable', 'payable')),
+                counterparty_name VARCHAR(255) NOT NULL,
+                counterparty_type VARCHAR(50) NOT NULL DEFAULT 'person'
+                    CHECK(counterparty_type IN ('person','company','bank','merchant','family','friend','other')),
+                title VARCHAR(500) NOT NULL,
+                description TEXT,
+                original_amount NUMERIC(15, 2) NOT NULL CHECK(original_amount > 0),
+                remaining_amount NUMERIC(15, 2) NOT NULL CHECK(remaining_amount >= 0),
+                currency VARCHAR(10) NOT NULL DEFAULT 'IRR',
+                issue_date DATE NOT NULL,
+                due_date DATE,
+                status VARCHAR(20) NOT NULL DEFAULT 'active'
+                    CHECK(status IN ('draft','active','partially_paid','settled','overdue','cancelled','written_off')),
+                priority VARCHAR(20) NOT NULL DEFAULT 'normal'
+                    CHECK(priority IN ('low','normal','high','urgent')),
+                reference_type VARCHAR(50),
+                reference_id INTEGER,
+                source_id INTEGER REFERENCES sources(id),
+                has_interest BOOLEAN NOT NULL DEFAULT FALSE,
+                interest_type VARCHAR(20) CHECK(interest_type IN ('simple','compound','fixed')),
+                interest_rate NUMERIC(8, 4),
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                deleted_at TIMESTAMP
+            )
+        """)
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_debts_user ON debts(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_debts_user_status ON debts(user_id, status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_debts_user_type ON debts(user_id, type)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_debts_due_date ON debts(due_date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_debts_counterparty ON debts(user_id, counterparty_name)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_debts_reference ON debts(reference_type, reference_id)")
+
+        # Debt payments table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS debt_payments (
+                id SERIAL PRIMARY KEY,
+                debt_id INTEGER NOT NULL REFERENCES debts(id) ON DELETE CASCADE,
+                transaction_id INTEGER REFERENCES transactions(id),
+                amount NUMERIC(15, 2) NOT NULL CHECK(amount > 0),
+                payment_date DATE NOT NULL,
+                payment_method VARCHAR(50) DEFAULT 'cash',
+                source_id INTEGER REFERENCES sources(id),
+                note TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                deleted_at TIMESTAMP
+            )
+        """)
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_debt_payments_debt ON debt_payments(debt_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_debt_payments_date ON debt_payments(payment_date)")
+
+        # Debt status history for audit trail
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS debt_status_history (
+                id SERIAL PRIMARY KEY,
+                debt_id INTEGER NOT NULL REFERENCES debts(id) ON DELETE CASCADE,
+                old_status VARCHAR(20),
+                new_status VARCHAR(20) NOT NULL,
+                changed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                note TEXT
+            )
+        """)
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_debt_status_history_debt ON debt_status_history(debt_id)")
+
+        # ── Contacts ───────────────────────────────────────────────────
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS contacts (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                name VARCHAR(255) NOT NULL,
+                phone VARCHAR(50),
+                email VARCHAR(255),
+                address TEXT,
+                notes TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                deleted_at TIMESTAMP
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_contacts_user ON contacts(user_id)")
+
+        # ── Tags ───────────────────────────────────────────────────────
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tags (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                name VARCHAR(100) NOT NULL,
+                color VARCHAR(20),
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                deleted_at TIMESTAMP,
+                UNIQUE(user_id, name)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tags_user ON tags(user_id)")
+
+        # ── Labels ─────────────────────────────────────────────────────
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS labels (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                name VARCHAR(100) NOT NULL,
+                color VARCHAR(20),
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                deleted_at TIMESTAMP,
+                UNIQUE(user_id, name)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_labels_user ON labels(user_id)")
+
+        # ── Junction: transaction_tags ──────────────────────────────────
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS transaction_tags (
+                transaction_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+                tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                PRIMARY KEY (transaction_id, tag_id)
+            )
+        """)
+
+        # ── Junction: transaction_labels ────────────────────────────────
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS transaction_labels (
+                transaction_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+                label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+                PRIMARY KEY (transaction_id, label_id)
+            )
+        """)
+
+        # ── Junction: source_labels ─────────────────────────────────────
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS source_labels (
+                source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+                label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+                PRIMARY KEY (source_id, label_id)
+            )
+        """)
+
         # Ensure legacy tables contain soft-delete support
         for table_name, column_name, definition in (
             ("transactions", "reference_type", "TEXT"),
@@ -355,6 +510,11 @@ def init_db():
             "budget_items",
             "financial_events",
             "financial_event_instances",
+            "debts",
+            "debt_payments",
+            "contacts",
+            "tags",
+            "labels",
         ):
             _ensure_column(cursor, table_name, "deleted_at", "TIMESTAMP")
 
@@ -372,6 +532,12 @@ def init_db():
             "financial_events",
             "financial_event_instances",
             "transfers",
+            "debts",
+            "debt_payments",
+            "debt_status_history",
+            "contacts",
+            "tags",
+            "labels",
         ):
             _ensure_column(cursor, table_name, "created_at", "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP")
             _ensure_column(cursor, table_name, "updated_at", "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP")
@@ -390,6 +556,12 @@ def init_db():
             "financial_events",
             "financial_event_instances",
             "transfers",
+            "debts",
+            "debt_payments",
+            "debt_status_history",
+            "contacts",
+            "tags",
+            "labels",
         ):
             _ensure_updated_at_trigger(cursor, table_name)
 
@@ -415,6 +587,12 @@ def init_db():
             "financial_events",
             "financial_event_instances",
             "users",
+            "debts",
+            "debt_payments",
+            "debt_status_history",
+            "contacts",
+            "tags",
+            "labels",
         ):
             cursor.execute(f"UPDATE {table_name} SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL")
             cursor.execute(f"UPDATE {table_name} SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL")
