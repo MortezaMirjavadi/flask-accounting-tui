@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { PERSIAN_MONTHS } from "@/lib/constants";
+import { t } from "i18next";
 
 function GaugeChart({
   value,
@@ -24,9 +25,9 @@ function GaugeChart({
   // Color based on utilization
   const color =
     pct > 100
-      ? "hsl(0, 84%, 60%)"    // red
+      ? "hsl(0, 84%, 60%)" // red
       : pct > 80
-        ? "hsl(38, 92%, 50%)"  // amber
+        ? "hsl(38, 92%, 50%)" // amber
         : "hsl(142, 71%, 45%)"; // green
 
   const bgColor = "hsl(var(--muted))";
@@ -100,16 +101,28 @@ function GaugeChart({
           </text>
         )}
         {/* Min/Max labels */}
-        <text x={15} y={cy + 18} textAnchor="middle" className="fill-muted-foreground" fontSize="9">
+        <text
+          x={15}
+          y={cy + 18}
+          textAnchor="middle"
+          className="fill-muted-foreground"
+          fontSize="9"
+        >
           0%
         </text>
-        <text x={165} y={cy + 18} textAnchor="middle" className="fill-muted-foreground" fontSize="9">
+        <text
+          x={165}
+          y={cy + 18}
+          textAnchor="middle"
+          className="fill-muted-foreground"
+          fontSize="9"
+        >
           100%
         </text>
       </svg>
       {pct > 100 && (
         <span className="mt-1 text-xs font-medium text-red-500">
-          +{(pct - 100).toFixed(0)}% over budget
+          +{(pct - 100).toFixed(0)}% {t("budget.over")}
         </span>
       )}
     </div>

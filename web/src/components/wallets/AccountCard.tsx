@@ -1,7 +1,8 @@
 import { useTranslation } from "react-i18next";
 import { Pencil, Trash2, Star } from "lucide-react";
 import type { Account } from "@/types";
-import { formatToman, formatCurrency } from "@/lib/format";
+import type { TranslationKey } from "@/types/i18next";
+import { formatCurrency } from "@/lib/format";
 import { getBankById } from "@/lib/bankConfig";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,7 @@ const CURRENCY_LABELS: Record<string, string> = {
   AED: "AED",
 };
 
-const ACCOUNT_TYPE_LABELS: Record<string, string> = {
+const ACCOUNT_TYPE_LABELS: Record<string, TranslationKey> = {
   cash: "wallets.cash",
   bank: "wallets.bank",
   card: "wallets.card",
@@ -126,7 +127,7 @@ export function AccountCard({
           className="bg-white/20 text-xs capitalize backdrop-blur-sm border-0"
           style={{ color: bank.textColor }}
         >
-          {t(ACCOUNT_TYPE_LABELS[account.account_type] ?? account.account_type)}
+          {t(ACCOUNT_TYPE_LABELS[account.account_type] ?? "wallets.other")}
         </Badge>
       </div>
     </div>

@@ -13,10 +13,16 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
+import type { TranslationKey } from "@/types/i18next";
 
 const ONBOARDING_KEY = "onboarding_done";
 
-const slides = [
+const slides: {
+  icon: typeof Wallet;
+  titleKey: TranslationKey;
+  descKey: TranslationKey;
+  color: string;
+}[] = [
   {
     icon: Wallet,
     titleKey: "intro.slide1.title",

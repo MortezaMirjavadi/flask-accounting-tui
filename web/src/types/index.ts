@@ -7,6 +7,7 @@ export type {
   WalletMember,
   WalletInvitation,
   WalletActivity,
+  Account,
   ExchangeRate,
   ConsolidatedBalance,
   Currency,

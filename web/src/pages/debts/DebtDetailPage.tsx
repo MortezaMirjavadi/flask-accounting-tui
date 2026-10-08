@@ -10,13 +10,16 @@ import {
   useWriteOffDebt,
   useSettleDebt,
   useCancelDebt,
+  useCategoryTree,
 } from "@/hooks";
+import { useWallets } from "@/hooks/wallets";
 import { formatToman, formatJalali } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AmountInput } from "@/components/shared/AmountInput";
 import { JalaliDatePicker } from "@/components/shared/JalaliDatePicker";
+import { CategoryTreeSelect } from "@/components/shared/CategoryTreeSelect";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
@@ -45,6 +48,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { PAYMENT_METHODS } from "@/lib/constants";
+import {
+  PAYMENT_METHOD_LABELS,
+  PRIORITY_LABELS,
+  enumLabel,
+} from "@/lib/enum-labels";
 import { toast } from "sonner";
 import {
   ArrowLeft,
@@ -63,7 +71,8 @@ export default function DebtDetailPage() {
   const debtId = Number(id);
 
   const { data: debt, isLoading } = useDebt(debtId);
-  const { data: payments, isLoading: paymentsLoading } = useDebtPayments(debtId);
+  const { data: payments, isLoading: paymentsLoading } =
+    useDebtPayments(debtId);
   const { data: history, isLoading: historyLoading } = useDebtHistory(debtId);
 
   const addPayment = useAddDebtPayment();
@@ -80,6 +89,14 @@ export default function DebtDetailPage() {
   const [paymentDate, setPaymentDate] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [paymentNote, setPaymentNote] = useState("");
+  const [paymentWalletId, setPaymentWalletId] = useState<number | null>(null);
+  const [paymentCategoryId, setPaymentCategoryId] = useState<number | null>(null);
+
+  const { data: walletsResp } = useWallets();
+  const wallets = walletsResp?.items ?? [];
+  // Payable debt payments are expenses, receivable payments are income.
+  const categoryFilterType = debt?.type === "receivable" ? "income" : "cost";
+  const { data: categoriesTree } = useCategoryTree({ type: categoryFilterType });
 
   const handleAddPayment = () => {
     if (!paymentAmount || !paymentDate) return;
@@ -91,6 +108,8 @@ export default function DebtDetailPage() {
           payment_date: paymentDate,
           payment_method: paymentMethod,
           note: paymentNote,
+          wallet_id: paymentWalletId ?? undefined,
+          category_id: paymentCategoryId ?? undefined,
         },
       },
       {
@@ -101,8 +120,15 @@ export default function DebtDetailPage() {
           setPaymentDate("");
           setPaymentMethod("cash");
           setPaymentNote("");
+          setPaymentWalletId(null);
+          setPaymentCategoryId(null);
         },
-        onError: () => toast.error(t("common.error")),
+        onError: (err) =>
+          toast.error(
+            err instanceof Error && err.message
+              ? err.message
+              : t("common.error"),
+          ),
       },
     );
   };
@@ -113,7 +139,10 @@ export default function DebtDetailPage() {
         toast.success(t("common.success"));
         setWriteOffOpen(false);
       },
-      onError: () => toast.error(t("common.error")),
+      onError: (err) =>
+        toast.error(
+          err instanceof Error && err.message ? err.message : t("common.error"),
+        ),
     });
   };
 
@@ -123,7 +152,10 @@ export default function DebtDetailPage() {
         toast.success(t("common.success"));
         setSettleOpen(false);
       },
-      onError: () => toast.error(t("common.error")),
+      onError: (err) =>
+        toast.error(
+          err instanceof Error && err.message ? err.message : t("common.error"),
+        ),
     });
   };
 
@@ -134,7 +166,10 @@ export default function DebtDetailPage() {
         setCancelOpen(false);
         navigate("/debts");
       },
-      onError: () => toast.error(t("common.error")),
+      onError: (err) =>
+        toast.error(
+          err instanceof Error && err.message ? err.message : t("common.error"),
+        ),
     });
   };
 
@@ -159,7 +194,16 @@ export default function DebtDetailPage() {
     );
   }
 
-  const isActive = debt.status === "active";
+  // Buttons stay available while the debt is ongoing. Final states per the
+  // backend are settled / cancelled / written_off; active, partially_paid and
+  // overdue debts can still receive payments and actions.
+  const FINAL_DEBT_STATUSES = new Set([
+    "settled",
+    "cancelled",
+    "canceled",
+    "written_off",
+  ]);
+  const isOngoing = !FINAL_DEBT_STATUSES.has(debt.status);
 
   return (
     <motion.div
@@ -170,16 +214,27 @@ export default function DebtDetailPage() {
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/debts")}>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate("/debts")}
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <h1 className="text-2xl font-bold">{debt.title}</h1>
           <StatusBadge status={debt.status} />
         </div>
         <div className="flex gap-2">
-          {isActive && (
+          {isOngoing && (
             <>
-              <Button onClick={() => setPaymentDialogOpen(true)}>
+              <Button
+                onClick={() => {
+                  // Prefill from the debt so one-click payments just work.
+                  setPaymentWalletId(debt.wallet_id ?? null);
+                  setPaymentCategoryId(debt.category_id ?? null);
+                  setPaymentDialogOpen(true);
+                }}
+              >
                 <CreditCard className="me-2 h-4 w-4" />
                 {t("debts.addPayment")}
               </Button>
@@ -207,25 +262,39 @@ export default function DebtDetailPage() {
             </div>
             <Separator />
             <div className="flex justify-between">
-              <span className="text-muted-foreground">{t("debts.counterparty")}</span>
+              <span className="text-muted-foreground">
+                {t("debts.counterparty")}
+              </span>
               <span className="font-medium">{debt.counterparty_name}</span>
             </div>
             <Separator />
             <div className="flex justify-between">
-              <span className="text-muted-foreground">{t("debts.originalAmount")}</span>
-              <span className="font-medium">{formatToman(debt.original_amount)}</span>
+              <span className="text-muted-foreground">
+                {t("debts.originalAmount")}
+              </span>
+              <span className="font-medium">
+                {formatToman(debt.original_amount)}
+              </span>
             </div>
             <Separator />
             <div className="flex justify-between">
-              <span className="text-muted-foreground">{t("debts.remainingAmount")}</span>
-              <span className={`font-bold ${debt.remaining_amount > 0 ? "text-destructive" : "text-success"}`}>
+              <span className="text-muted-foreground">
+                {t("debts.remainingAmount")}
+              </span>
+              <span
+                className={`font-bold ${debt.remaining_amount > 0 ? "text-destructive" : "text-success"}`}
+              >
                 {formatToman(debt.remaining_amount)}
               </span>
             </div>
             <Separator />
             <div className="flex justify-between">
-              <span className="text-muted-foreground">{t("debts.priority")}</span>
-              <span className="font-medium capitalize">{debt.priority}</span>
+              <span className="text-muted-foreground">
+                {t("debts.priority")}
+              </span>
+              <span className="font-medium">
+                {enumLabel(t, PRIORITY_LABELS, debt.priority)}
+              </span>
             </div>
           </CardContent>
         </Card>
@@ -236,20 +305,28 @@ export default function DebtDetailPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex justify-between">
-              <span className="text-muted-foreground">{t("checks.issueDate")}</span>
+              <span className="text-muted-foreground">
+                {t("checks.issueDate")}
+              </span>
               <span>{formatJalali(debt.issue_date)}</span>
             </div>
             <Separator />
             <div className="flex justify-between">
-              <span className="text-muted-foreground">{t("checks.dueDate")}</span>
+              <span className="text-muted-foreground">
+                {t("checks.dueDate")}
+              </span>
               <span>{debt.due_date ? formatJalali(debt.due_date) : "-"}</span>
             </div>
             {debt.description && (
               <>
                 <Separator />
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t("common.description")}</span>
-                  <span className="max-w-[200px] text-end">{debt.description}</span>
+                  <span className="text-muted-foreground">
+                    {t("common.description")}
+                  </span>
+                  <span className="max-w-[200px] text-end">
+                    {debt.description}
+                  </span>
                 </div>
               </>
             )}
@@ -257,26 +334,40 @@ export default function DebtDetailPage() {
               <>
                 <Separator />
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t("debts.hasInterest")}</span>
+                  <span className="text-muted-foreground">
+                    {t("debts.hasInterest")}
+                  </span>
                   <span className="font-medium">
                     {debt.interest_rate ? `${debt.interest_rate}%` : "-"}
                   </span>
                 </div>
               </>
             )}
-            {isActive && (
+            {isOngoing && (
               <>
                 <Separator />
                 <div className="flex gap-2 pt-2">
-                  <Button variant="outline" size="sm" onClick={() => setSettleOpen(true)}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSettleOpen(true)}
+                  >
                     <CheckCircle2 className="me-1 h-4 w-4" />
                     {t("debts.settle")}
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => setWriteOffOpen(true)}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setWriteOffOpen(true)}
+                  >
                     <Ban className="me-1 h-4 w-4" />
                     {t("debts.writeOff")}
                   </Button>
-                  <Button variant="destructive" size="sm" onClick={() => setCancelOpen(true)}>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => setCancelOpen(true)}
+                  >
                     <XCircle className="me-1 h-4 w-4" />
                     {t("common.cancel")}
                   </Button>
@@ -287,7 +378,6 @@ export default function DebtDetailPage() {
         </Card>
       </div>
 
-      {/* Payment History */}
       <Card>
         <CardHeader>
           <CardTitle>{t("debts.paymentHistory")}</CardTitle>
@@ -314,19 +404,26 @@ export default function DebtDetailPage() {
                     <TableCell className="font-medium text-success">
                       {formatToman(payment.amount)}
                     </TableCell>
-                    <TableCell className="capitalize">{payment.payment_method}</TableCell>
+                    <TableCell>
+                      {enumLabel(
+                        t,
+                        PAYMENT_METHOD_LABELS,
+                        payment.payment_method,
+                      )}
+                    </TableCell>
                     <TableCell>{payment.note || "-"}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           ) : (
-            <div className="p-6 text-center text-muted-foreground">{t("common.noData")}</div>
+            <div className="p-6 text-center text-muted-foreground">
+              {t("common.noData")}
+            </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Status History */}
       <Card>
         <CardHeader>
           <CardTitle>{t("debts.statusHistory")}</CardTitle>
@@ -348,20 +445,19 @@ export default function DebtDetailPage() {
                     <p className="mt-1 text-xs text-muted-foreground">
                       {formatJalali(entry.changed_at)}
                     </p>
-                    {entry.note && (
-                      <p className="mt-1 text-sm">{entry.note}</p>
-                    )}
+                    {entry.note && <p className="mt-1 text-sm">{entry.note}</p>}
                   </div>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-center text-muted-foreground">{t("common.noData")}</p>
+            <p className="text-center text-muted-foreground">
+              {t("common.noData")}
+            </p>
           )}
         </CardContent>
       </Card>
 
-      {/* Add Payment Dialog */}
       <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -378,10 +474,34 @@ export default function DebtDetailPage() {
             </div>
             <div className="space-y-2">
               <Label>{t("common.date")}</Label>
-              <JalaliDatePicker
-                value={paymentDate}
-                onChange={setPaymentDate}
+              <JalaliDatePicker value={paymentDate} onChange={setPaymentDate} />
+            </div>
+            <div className="space-y-2">
+              <Label>{t("transactions.category")}</Label>
+              <CategoryTreeSelect
+                categories={categoriesTree ?? []}
+                value={paymentCategoryId ?? undefined}
+                onChange={(id) => setPaymentCategoryId(id)}
+                placeholder={t("common.select")}
               />
+            </div>
+            <div className="space-y-2">
+              <Label>{t("transactions.source")}</Label>
+              <Select
+                value={paymentWalletId != null ? String(paymentWalletId) : undefined}
+                onValueChange={(v) => setPaymentWalletId(Number(v))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={t("common.select")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {wallets.map((wallet) => (
+                    <SelectItem key={wallet.id} value={String(wallet.id)}>
+                      {wallet.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label>{t("common.type")}</Label>
@@ -392,7 +512,7 @@ export default function DebtDetailPage() {
                 <SelectContent>
                   {PAYMENT_METHODS.map((method) => (
                     <SelectItem key={method} value={method}>
-                      {method.replace(/_/g, " ")}
+                      {t(PAYMENT_METHOD_LABELS[method])}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -407,18 +527,25 @@ export default function DebtDetailPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPaymentDialogOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setPaymentDialogOpen(false)}
+            >
               {t("common.cancel")}
             </Button>
-            <Button onClick={handleAddPayment} disabled={addPayment.isPending || !paymentAmount || !paymentDate}>
-              {addPayment.isPending && <Loader2 className="me-2 h-4 w-4 animate-spin" />}
+            <Button
+              onClick={handleAddPayment}
+              disabled={addPayment.isPending || !paymentAmount || !paymentDate}
+            >
+              {addPayment.isPending && (
+                <Loader2 className="me-2 h-4 w-4 animate-spin" />
+              )}
               {t("common.confirm")}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Confirm Dialogs */}
       <ConfirmDialog
         open={writeOffOpen}
         onOpenChange={setWriteOffOpen}

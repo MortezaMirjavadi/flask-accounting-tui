@@ -1,3 +1,5 @@
+import i18n from "@/i18n";
+
 const BASE_URL = import.meta.env.VITE_API_URL || "/api";
 
 export class ApiError extends Error {
@@ -25,6 +27,7 @@ async function request<T>(
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    "Accept-Language": i18n.language || "en",
     ...(username ? { "X-Username": username } : {}),
     ...(options.headers as Record<string, string>),
   };

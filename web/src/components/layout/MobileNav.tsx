@@ -3,8 +3,9 @@ import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
 import { LayoutDashboard, ArrowLeftRight, Plus, HandCoins, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { TranslationKey } from "@/types/i18next";
 
-const navItems = [
+const navItems: { icon: typeof LayoutDashboard; labelKey: TranslationKey; url: string }[] = [
   { icon: LayoutDashboard, labelKey: "nav.dashboard", url: "/dashboard" },
   { icon: ArrowLeftRight, labelKey: "nav.transactions", url: "/transactions" },
   { icon: HandCoins, labelKey: "nav.debts", url: "/debts" },

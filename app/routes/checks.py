@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request
 
 from app.models import validate_check_payload
-from app.utils.helpers import get_user_id_from_request
+from app.utils.helpers import get_user_id_from_request, get_locale_from_request
 from app.utils.pagination import parse_pagination
 from services.check_service import CheckService
 
@@ -186,7 +186,9 @@ def clear_check(check_id):
     cleared_date = payload.get("cleared_date")
 
     try:
-        return jsonify(CheckService.mark_check_cleared(user_id, check_id, cleared_date=cleared_date))
+        return jsonify(CheckService.mark_check_cleared(
+            user_id, check_id, cleared_date=cleared_date, locale=get_locale_from_request()
+        ))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:

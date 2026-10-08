@@ -72,7 +72,7 @@ class MessageBox(ModalScreen):
                 self.message_text,
                 classes="dialog_message error_message" if self.is_error else "dialog_message"
             )
-            yield Button("OK", variant="error" if self.is_error else "primary", id="ok")
+            yield Button("✓ OK", variant="error" if self.is_error else "primary", id="ok")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss()
@@ -96,8 +96,8 @@ class ConfirmBox(ModalScreen[bool]):
             yield Label(self.title_text, classes="dialog_title")
             yield Static(self.message_text, classes="dialog_message")
             with Horizontal(classes="dialog_buttons"):
-                yield Button("Yes", variant="primary", id="yes")
-                yield Button("No", variant="default", id="no")
+                yield Button("✓ Yes", variant="primary", id="yes")
+                yield Button("✖ No", variant="default", id="no")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "yes")
@@ -128,15 +128,15 @@ class TransactionItemsModal(ModalScreen):
                 yield Input(placeholder="Qty", id="item_qty")
                 yield Input(placeholder="Unit", id="item_unit")
                 yield Input(placeholder="Price", id="item_price")
-                yield Button("Add Item", variant="success", id="add_item_btn")
+                yield Button("➕ Add Item", variant="success", id="add_item_btn")
             yield Input(placeholder="Search by name...", id="item_search")
             yield DataTable(id="items_table")
             with Horizontal(classes="items_action_row"):
-                yield Button("Remove", variant="error", id="remove_item_btn")
+                yield Button("🗑 Remove", variant="error", id="remove_item_btn")
                 yield Static("No items.", id="items_total")
             with Horizontal(classes="dialog_buttons"):
-                yield Button("Done", variant="primary", id="done")
-                yield Button("Cancel", variant="default", id="cancel_btn")
+                yield Button("✓ Done", variant="primary", id="done")
+                yield Button("✖ Cancel", variant="default", id="cancel_btn")
 
     def on_mount(self) -> None:
         table = self.query_one("#items_table", DataTable)

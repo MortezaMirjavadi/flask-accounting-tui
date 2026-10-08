@@ -1,17 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Input } from "@/components/ui/input";
-
-/** Format a number string with commas: "1000000" -> "1,000,000" */
-export function addCommas(value: string): string {
-  const digits = value.replace(/\D/g, "");
-  if (!digits) return "";
-  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
-
-/** Remove commas and return the raw number string */
-export function removeCommas(value: string): string {
-  return value.replace(/,/g, "");
-}
+import { formatAmountInput, parseAmountInput } from "@/lib/format";
+import i18n from "@/i18n";
 
 interface AmountInputProps {
   value: number | string;
@@ -23,52 +13,53 @@ interface AmountInputProps {
 }
 
 /**
- * A text input that displays amounts with comma formatting (e.g., 1,000,000).
- * Only allows digit input. Stores the raw number in the form state.
+ * A text input that displays amounts grouped per locale
+ * (fa: "۱٬۰۰۰٬۰۰۰" / en: "1,000,000"). Accepts Persian and English digits;
+ * the raw number in the form state is always an ASCII-digit number, so API
+ * payloads never contain localized digits.
  */
 export function AmountInput({
   value,
   onChange,
   onBlur,
-  placeholder = "0",
+  placeholder,
   className,
   disabled,
 }: AmountInputProps) {
   const numericValue = Number(value);
-  const [display, setDisplay] = useState(() =>
-    numericValue > 0 ? addCommas(String(Math.floor(numericValue))) : ""
+  // Internal state: plain ASCII digit string (no separators).
+  const [raw, setRaw] = useState(() =>
+    numericValue > 0 ? String(Math.floor(numericValue)) : ""
   );
 
-  // Sync display when external value changes (e.g., form reset)
+  // Sync state when the external value changes (e.g. form reset)
   useEffect(() => {
     const current = Number(value);
-    const formatted = current > 0 ? addCommas(String(Math.floor(current))) : "";
-    setDisplay((prev) => (prev === formatted ? prev : formatted));
+    const next = current > 0 ? String(Math.floor(current)) : "";
+    setRaw((prev) => (prev === next ? prev : next));
   }, [value]);
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const raw = removeCommas(e.target.value);
-      if (!/^\d*$/.test(raw)) return;
-      setDisplay(addCommas(raw));
-      onChange(raw ? Number(raw) : 0);
+      const digits = parseAmountInput(e.target.value);
+      setRaw(digits);
+      onChange(digits ? Number(digits) : 0);
     },
     [onChange]
   );
 
   const handleBlur = useCallback(() => {
-    const raw = removeCommas(display);
     onChange(raw ? Number(raw) : 0);
     onBlur?.();
-  }, [display, onChange, onBlur]);
+  }, [raw, onChange, onBlur]);
 
   return (
     <Input
       type="text"
       inputMode="numeric"
       dir="ltr"
-      value={display}
-      placeholder={placeholder}
+      value={formatAmountInput(raw)}
+      placeholder={placeholder ?? (i18n.language === "fa" ? "۰" : "0")}
       onChange={handleChange}
       onBlur={handleBlur}
       className={className}

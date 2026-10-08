@@ -9,7 +9,7 @@ from textual.widgets import (
     ListItem, ListView, Select, Static, Rule, TextArea,
 )
 
-from tui.api import api_get, api_post, api_put, api_delete, handle_response, format_toman
+from tui.api import api_get, api_post, api_put, api_delete, extract_items, handle_response, format_toman
 from tui.widgets import ConfirmBox, HelpTip, MessageBox, StatusBar
 
 
@@ -34,7 +34,7 @@ class ContactListScreen(Screen):
             yield Rule()
             with Horizontal(classes="filter_row"):
                 yield Input(placeholder="Search contacts...", id="contact_search")
-                yield Button("Search", variant="primary", id="contact_search_btn")
+                yield Button("🔍 Search", variant="primary", id="contact_search_btn")
             yield DataTable(id="contact_table")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[A] Add  [E] Edit  [D] Delete  [R] Refresh  [Esc] Back", id="help")
@@ -61,7 +61,7 @@ class ContactListScreen(Screen):
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
-        self._data = data or []
+        self._data = extract_items(data)
         if not self._data:
             table.add_row("-", "No contacts found", "-", "-", "-")
         else:
@@ -159,8 +159,8 @@ class ContactFormScreen(Screen):
                 yield Label("Notes:")
                 yield TextArea(id="contact_notes")
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", variant="default", id="cancel")
+                yield Button("💾 Save", variant="primary", id="save")
+                yield Button("✖ Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")
@@ -256,7 +256,7 @@ class TagListScreen(Screen):
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
-        self._data = data or []
+        self._data = extract_items(data)
         if not self._data:
             table.add_row("-", "No tags found", "-", "-")
         else:
@@ -346,8 +346,8 @@ class TagFormScreen(Screen):
                 value=None, id="tag_color", allow_blank=False,
             )
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", variant="default", id="cancel")
+                yield Button("💾 Save", variant="primary", id="save")
+                yield Button("✖ Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")
@@ -437,7 +437,7 @@ class LabelListScreen(Screen):
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
-        self._data = data or []
+        self._data = extract_items(data)
         if not self._data:
             table.add_row("-", "No labels found", "-", "-", "-")
         else:
@@ -528,8 +528,8 @@ class LabelFormScreen(Screen):
                 value=None, id="label_color", allow_blank=False,
             )
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", variant="default", id="cancel")
+                yield Button("💾 Save", variant="primary", id="save")
+                yield Button("✖ Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")

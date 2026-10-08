@@ -9,6 +9,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
     <Sonner
       theme="system"
       className="toaster group"
+      style={{ fontFamily: '"Vazirmatn", "Inter", ui-sans-serif, system-ui, sans-serif' }}
       toastOptions={{
         classNames: {
           toast:

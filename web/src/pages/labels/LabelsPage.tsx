@@ -9,7 +9,7 @@ import {
   useUpdateLabel,
   useDeleteLabel,
 } from "@/hooks";
-import { labelSchema, type LabelFormData } from "@/schemas/metadata";
+import { labelSchema, type LabelFormData, type LabelFormInput } from "@/schemas/metadata";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +25,7 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
+import { ColorPicker } from "@/components/ui/color-picker";
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2, Loader2 } from "lucide-react";
 import type { Label } from "@/types";
@@ -42,7 +43,7 @@ export default function LabelsPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
-  const form = useForm<LabelFormData>({
+  const form = useForm<LabelFormInput, unknown, LabelFormData>({
     resolver: zodResolver(labelSchema),
     defaultValues: {
       name: "",
@@ -75,7 +76,12 @@ export default function LabelsPage() {
         setDeleteOpen(false);
         setDeletingId(null);
       },
-      onError: () => toast.error(t("common.error")),
+      onError: (err) =>
+            toast.error(
+              err instanceof Error && err.message
+                ? err.message
+                : t("common.error"),
+            ),
     });
   };
 
@@ -88,7 +94,12 @@ export default function LabelsPage() {
             toast.success(t("common.success"));
             setDialogOpen(false);
           },
-          onError: () => toast.error(t("common.error")),
+          onError: (err) =>
+            toast.error(
+              err instanceof Error && err.message
+                ? err.message
+                : t("common.error"),
+            ),
         },
       );
     } else {
@@ -97,7 +108,12 @@ export default function LabelsPage() {
           toast.success(t("common.success"));
           setDialogOpen(false);
         },
-        onError: () => toast.error(t("common.error")),
+        onError: (err) =>
+            toast.error(
+              err instanceof Error && err.message
+                ? err.message
+                : t("common.error"),
+            ),
       });
     }
   };
@@ -190,19 +206,7 @@ export default function LabelsPage() {
                 <FormItem>
                   <FormLabel>{t("metadata.color")}</FormLabel>
                   <FormControl>
-                    <div className="flex items-center gap-3">
-                      <Input
-                        type="color"
-                        {...field}
-                        className="h-10 w-16 cursor-pointer p-1"
-                      />
-                      <Input
-                        value={field.value}
-                        onChange={field.onChange}
-                        placeholder="#3b82f6"
-                        className="flex-1"
-                      />
-                    </div>
+                    <ColorPicker value={field.value} onChange={field.onChange} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

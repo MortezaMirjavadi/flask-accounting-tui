@@ -9,7 +9,7 @@ import {
   useUpdateContact,
   useDeleteContact,
 } from "@/hooks";
-import { contactSchema, type ContactFormData } from "@/schemas/metadata";
+import { contactSchema, type ContactFormData, type ContactFormInput } from "@/schemas/metadata";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +36,7 @@ import {
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2, Search, Loader2 } from "lucide-react";
 import type { Contact } from "@/types";
+import { toPersianDigits } from "@/lib/format";
 
 export default function ContactsPage() {
   const { t } = useTranslation();
@@ -51,7 +52,7 @@ export default function ContactsPage() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
 
-  const form = useForm<ContactFormData>({
+  const form = useForm<ContactFormInput, unknown, ContactFormData>({
     resolver: zodResolver(contactSchema),
     defaultValues: {
       name: "",
@@ -93,7 +94,12 @@ export default function ContactsPage() {
         setDeleteOpen(false);
         setDeletingId(null);
       },
-      onError: () => toast.error(t("common.error")),
+      onError: (err) =>
+            toast.error(
+              err instanceof Error && err.message
+                ? err.message
+                : t("common.error"),
+            ),
     });
   };
 
@@ -106,7 +112,12 @@ export default function ContactsPage() {
             toast.success(t("common.success"));
             setDialogOpen(false);
           },
-          onError: () => toast.error(t("common.error")),
+          onError: (err) =>
+            toast.error(
+              err instanceof Error && err.message
+                ? err.message
+                : t("common.error"),
+            ),
         },
       );
     } else {
@@ -115,7 +126,12 @@ export default function ContactsPage() {
           toast.success(t("common.success"));
           setDialogOpen(false);
         },
-        onError: () => toast.error(t("common.error")),
+        onError: (err) =>
+            toast.error(
+              err instanceof Error && err.message
+                ? err.message
+                : t("common.error"),
+            ),
       });
     }
   };
@@ -199,7 +215,7 @@ export default function ContactsPage() {
                 {filtered.map((contact) => (
                   <TableRow key={contact.id}>
                     <TableCell className="font-medium">{contact.name}</TableCell>
-                    <TableCell>{contact.phone || "-"}</TableCell>
+                    <TableCell>{toPersianDigits(contact.phone) || "-"}</TableCell>
                     <TableCell>{contact.email || "-"}</TableCell>
                     <TableCell className="text-end">
                       <div className="flex justify-end gap-1">

@@ -10,9 +10,15 @@ import {
   useUpdateTransaction,
   useCreateTransfer,
 } from "@/hooks/transactions";
-import { useCategories } from "@/hooks/categories";
+import { useCategoryTree } from "@/hooks/categories";
 import { useSources } from "@/hooks/sources";
 import { useAccounts } from "@/hooks/accounts";
+import {
+  useTags,
+  useLabels,
+  useSetTransactionTags,
+  useSetTransactionLabels,
+} from "@/hooks/metadata";
 import { useWalletContext } from "@/context/wallet-context";
 import {
   transactionSchema,
@@ -26,6 +32,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { AmountInput } from "@/components/shared/AmountInput";
 import { JalaliDatePicker } from "@/components/shared/JalaliDatePicker";
+import { CategoryTreeSelect } from "@/components/shared/CategoryTreeSelect";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -50,22 +57,11 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { formatToman, numberToPersianWords, toPersianDigits } from "@/lib/format";
+import { formatToman, numberToPersianWords, formatAmountInput, parseAmountInput, formatNumber, toSafeNumber } from "@/lib/format";
+import { toGregorian } from "@/lib/jalali";
 import i18n from "@/i18n";
 import { getBankById } from "@/lib/bankConfig";
 import { toast } from "sonner";
-
-/** Format a number string with commas: "1000000" -> "1,000,000" */
-function addCommas(value: string): string {
-  const digits = value.replace(/\D/g, "");
-  if (!digits) return "";
-  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
-
-/** Remove commas and return the raw number string */
-function removeCommas(value: string): string {
-  return value.replace(/,/g, "");
-}
 
 interface CombinedFormData {
   date: string;
@@ -96,13 +92,18 @@ export default function TransactionFormPage() {
   const { data: transaction, isLoading: txLoading } = useTransaction(
     Number(id) || 0,
   );
-  const { data: categoriesResp, isLoading: categoriesLoading } = useCategories();
+  const { data: categoriesTree, isLoading: categoriesLoading } = useCategoryTree();
   const { data: sourcesResp, isLoading: sourcesLoading } = useSources();
-  const categories = categoriesResp?.items;
   const sources = sourcesResp?.items;
   const createMutation = useCreateTransaction();
   const updateMutation = useUpdateTransaction();
   const createTransferMutation = useCreateTransfer();
+  const setTxTags = useSetTransactionTags();
+  const setTxLabels = useSetTransactionLabels();
+  const { data: tagsResp } = useTags();
+  const tags = tagsResp?.items;
+  const { data: labelsResp } = useLabels();
+  const labels = labelsResp?.items;
 
   // Accounts for the active wallet
   const { data: activeWalletAccounts, isLoading: accountsLoading } =
@@ -125,7 +126,9 @@ export default function TransactionFormPage() {
   const [isTransfer, setIsTransfer] = useState(
     searchParams.get("transfer") === "true",
   );
-  const [amountDisplay, setAmountDisplay] = useState("");
+  const [amountRaw, setAmountRaw] = useState("");
+  const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
+  const [selectedLabelIds, setSelectedLabelIds] = useState<number[]>([]);
   const [transferWalletId, setTransferWalletId] = useState<number | null>(
     activeWallet?.id ?? null,
   );
@@ -154,14 +157,26 @@ export default function TransactionFormPage() {
   });
 
   const watchAmount = useWatch({ control: form.control, name: "amount" });
+  const watchItems = useWatch({ control: form.control, name: "items" });
+  const itemsSum = (watchItems ?? []).reduce(
+    (sum, item) => sum + toSafeNumber(item?.quantity, 1) * toSafeNumber(item?.unit_price),
+    0
+  );
+  const itemsMismatch =
+    itemsEnabled && watchItems && watchItems.length > 0 && Math.abs(itemsSum - toSafeNumber(watchAmount)) > 0.01;
 
   useEffect(() => {
     if (isEdit && transaction) {
+      // Backend returns date in Jalali (e.g. 1405-04-31); convert to Gregorian for the picker/schema
+      const gregorianDate = toGregorian(transaction.date) || transaction.date;
+      // source_id is often null; derive from wallet_id or account's wallet
+      const effectiveSourceId =
+        transaction.source_id ?? transaction.wallet_id ?? 0;
       form.reset({
-        date: transaction.date,
+        date: gregorianDate,
         amount: transaction.amount,
         category_id: transaction.category_id,
-        source_id: transaction.source_id,
+        source_id: effectiveSourceId,
         account_id: transaction.account_id,
         wallet_id: transaction.wallet_id,
         is_private: transaction.is_private ?? false,
@@ -171,7 +186,9 @@ export default function TransactionFormPage() {
         to_account_id: 0,
         notes: "",
       });
-      setAmountDisplay(addCommas(String(Math.floor(transaction.amount))));
+      setAmountRaw(String(Math.floor(transaction.amount)));
+      setSelectedTagIds((transaction.tags ?? []).map((tag) => tag.id));
+      setSelectedLabelIds((transaction.labels ?? []).map((label) => label.id));
       if (transaction.wallet_id) {
         setEditWalletId(transaction.wallet_id);
       }
@@ -215,7 +232,20 @@ export default function TransactionFormPage() {
           wallet_id: currentWalletId,
           is_private: data.is_private,
           description: data.description,
-          items: itemsEnabled ? data.items : [],
+          // total_price is derived (quantity × unit_price) — the backend
+          // requires the items sum to equal the transaction amount.
+          items: itemsEnabled
+            ? data.items.map((item) => {
+                const quantity = toSafeNumber(item.quantity, 1);
+                const unitPrice = toSafeNumber(item.unit_price);
+                return {
+                  ...item,
+                  quantity,
+                  unit_price: unitPrice,
+                  total_price: quantity * unitPrice,
+                };
+              })
+            : [],
         };
         const result = transactionSchema.safeParse(txData);
         if (!result.success) {
@@ -230,16 +260,38 @@ export default function TransactionFormPage() {
             id: Number(id),
             data: result.data,
           });
+          if (selectedTagIds.length > 0) {
+            await setTxTags.mutateAsync({ txId: Number(id), tagIds: selectedTagIds });
+          }
+          if (selectedLabelIds.length > 0) {
+            await setTxLabels.mutateAsync({ txId: Number(id), labelIds: selectedLabelIds });
+          }
           toast.success(t("common.success"));
           navigate(`/transactions/${id}`);
         } else {
-          await createMutation.mutateAsync(result.data);
+          const created = await createMutation.mutateAsync(result.data);
+          const newTxId = created.id;
+          if (newTxId && selectedTagIds.length > 0) {
+            await setTxTags.mutateAsync({ txId: newTxId, tagIds: selectedTagIds });
+          }
+          if (newTxId && selectedLabelIds.length > 0) {
+            await setTxLabels.mutateAsync({ txId: newTxId, labelIds: selectedLabelIds });
+          }
           toast.success(t("common.success"));
           navigate("/transactions");
         }
       }
-    } catch {
-      toast.error(t("common.error"));
+    } catch (err: unknown) {
+      let message = t("common.error");
+      if (err && typeof err === "object" && "response" in err) {
+        const axiosErr = err as { response?: { data?: { error?: string } } };
+        if (axiosErr.response?.data?.error) {
+          message = axiosErr.response.data.error;
+        }
+      } else if (err instanceof Error && err.message) {
+        message = err.message;
+      }
+      toast.error(message);
     }
   }
 
@@ -343,19 +395,16 @@ export default function TransactionFormPage() {
                     type="text"
                     inputMode="numeric"
                     dir="ltr"
-                    value={i18n.language === "fa" ? toPersianDigits(amountDisplay) : amountDisplay}
+                    value={formatAmountInput(amountRaw)}
                     placeholder={i18n.language === "fa" ? "۰" : "0"}
                     onChange={(e) => {
-                      // Convert Persian digits to Latin for processing
-                      const input = e.target.value.replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)));
-                      const raw = removeCommas(input);
-                      if (!/^\d*$/.test(raw)) return;
-                      setAmountDisplay(addCommas(raw));
-                      form.setValue("amount", raw ? Number(raw) : 0);
+                      // Persian digits are converted to ASCII for the form state
+                      const digits = parseAmountInput(e.target.value);
+                      setAmountRaw(digits);
+                      form.setValue("amount", digits ? Number(digits) : 0);
                     }}
                     onBlur={() => {
-                      const raw = removeCommas(amountDisplay);
-                      form.setValue("amount", raw ? Number(raw) : 0);
+                      form.setValue("amount", amountRaw ? Number(amountRaw) : 0);
                     }}
                   />
                 </FormControl>
@@ -582,23 +631,14 @@ export default function TransactionFormPage() {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>{t("transactions.category")}</FormLabel>
-                  <Select
-                    onValueChange={(val) => field.onChange(Number(val))}
-                    value={field.value ? String(field.value) : ""}
-                  >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder={t("common.select")} />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {categories?.map((cat) => (
-                        <SelectItem key={cat.id} value={String(cat.id)}>
-                          {cat.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <FormControl>
+                    <CategoryTreeSelect
+                      categories={categoriesTree ?? []}
+                      value={field.value || undefined}
+                      onChange={field.onChange}
+                      placeholder={t("common.select")}
+                    />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
@@ -664,6 +704,81 @@ export default function TransactionFormPage() {
               </FormItem>
             )}
           />
+        )}
+
+        {/* Tags & Labels */}
+        {!isTransfer && (
+          <div className="grid gap-4 grid-cols-2">
+            <div className="space-y-2">
+              <FormLabel>{t("nav.tags")}</FormLabel>
+              {tags && tags.length > 0 ? (
+                <div className="flex flex-wrap gap-2 rounded-md border p-2 min-h-[40px]">
+                  {tags.map((tag) => {
+                    const selected = selectedTagIds.includes(tag.id);
+                    return (
+                      <button
+                        key={tag.id}
+                        type="button"
+                        onClick={() =>
+                          setSelectedTagIds((prev) =>
+                            selected
+                              ? prev.filter((id) => id !== tag.id)
+                              : [...prev, tag.id],
+                          )
+                        }
+                        className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                          selected
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted text-muted-foreground hover:bg-muted/80"
+                        }`}
+                      >
+                        {tag.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground rounded-md border p-2">
+                  {t("common.noData")}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <FormLabel>{t("nav.labels")}</FormLabel>
+              {labels && labels.length > 0 ? (
+                <div className="flex flex-wrap gap-2 rounded-md border p-2 min-h-[40px]">
+                  {labels.map((label) => {
+                    const selected = selectedLabelIds.includes(label.id);
+                    return (
+                      <button
+                        key={label.id}
+                        type="button"
+                        onClick={() =>
+                          setSelectedLabelIds((prev) =>
+                            selected
+                              ? prev.filter((id) => id !== label.id)
+                              : [...prev, label.id],
+                          )
+                        }
+                        className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                          selected
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted text-muted-foreground hover:bg-muted/80"
+                        }`}
+                      >
+                        {label.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground rounded-md border p-2">
+                  {t("common.noData")}
+                </p>
+              )}
+            </div>
+          </div>
         )}
 
         {/* Line Items Section */}
@@ -792,6 +907,20 @@ export default function TransactionFormPage() {
                     </div>
                   </div>
                 ))}
+                {fields.length > 0 && (
+                  <p
+                    className={
+                      itemsMismatch
+                        ? "text-xs font-medium text-destructive"
+                        : "text-xs text-muted-foreground"
+                    }
+                  >
+                    {t("transactions.itemsSum")}: {formatNumber(itemsSum)}
+                    {itemsMismatch && (
+                      <span> — {t("transactions.itemsSumMismatch")}</span>
+                    )}
+                  </p>
+                )}
                 <Button
                   type="button"
                   variant="outline"

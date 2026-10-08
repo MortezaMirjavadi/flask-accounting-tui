@@ -8,7 +8,7 @@ import {
   useDeleteBudgetPeriod,
 } from "@/hooks/budget";
 import { PERSIAN_MONTHS } from "@/lib/constants";
-import { formatToman } from "@/lib/format";
+import { formatToman, toPersianDigits } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -61,9 +61,7 @@ export default function BudgetPeriodsPage() {
         <h1 className="text-2xl font-bold">{t("budget.periods")}</h1>
         <div className="flex items-center gap-2">
           <Button variant="outline" asChild>
-            <Link to="/budget/report">
-              {t("budget.report")}
-            </Link>
+            <Link to="/budget/report">{t("budget.report")}</Link>
           </Button>
           <Button asChild>
             <Link to="/budget/periods/new">
@@ -104,7 +102,8 @@ export default function BudgetPeriodsPage() {
               <Card>
                 <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
                   <CardTitle className="text-lg">
-                    {PERSIAN_MONTHS[period.month - 1]} {period.year}
+                    {PERSIAN_MONTHS[period.month - 1]}{" "}
+                    {toPersianDigits(String(period.year))}
                   </CardTitle>
                   <div className="flex items-center gap-1">
                     <Button
@@ -185,10 +184,7 @@ export default function BudgetPeriodsPage() {
             <DialogDescription>{t("common.deleteConfirm")}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeletingPeriodId(null)}
-            >
+            <Button variant="outline" onClick={() => setDeletingPeriodId(null)}>
               {t("common.cancel")}
             </Button>
             <Button

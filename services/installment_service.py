@@ -240,7 +240,7 @@ class InstallmentService:
             join_clause = (
                 " FROM installment_plans p"
                 " INNER JOIN categories c on c.id = p.category_id"
-                " INNER JOIN wallets w on w.id = p.wallet_id"
+                " LEFT JOIN wallets w on w.id = p.wallet_id"
             )
 
             count_sql = "SELECT COUNT(*) as total" + join_clause + where_clause
@@ -291,7 +291,7 @@ class InstallmentService:
                     w.name Wallet
                 FROM installment_plans p
                         INNER JOIN categories c on c.id = p.category_id
-                        INNER JOIN wallets w on w.id = p.wallet_id
+                        LEFT JOIN wallets w on w.id = p.wallet_id
                 WHERE p.id = %s AND p.user_id = %s AND p.deleted_at IS NULL
                 """,
                 (plan_id, user_id),

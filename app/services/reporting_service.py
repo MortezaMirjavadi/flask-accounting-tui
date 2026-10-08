@@ -538,7 +538,14 @@ class ReportingService:
     @staticmethod
     def _build_wallet_health(cursor, user_id: int, start_date: str, end_date: str) -> list[WalletHealth]:
         cursor.execute(
-            "SELECT id, name, amount FROM wallets WHERE deleted_at IS NULL AND (user_id = %s OR id IN (SELECT wallet_id FROM wallet_members WHERE user_id = %s)) ORDER BY name",
+            """SELECT w.id, w.name,
+                      COALESCE(SUM(a.amount), 0) AS amount
+               FROM wallets w
+               LEFT JOIN accounts a ON a.wallet_id = w.id AND a.deleted_at IS NULL
+               WHERE w.deleted_at IS NULL
+                 AND (w.user_id = %s OR w.id IN (SELECT wallet_id FROM wallet_members WHERE user_id = %s))
+               GROUP BY w.id, w.name
+               ORDER BY w.name""",
             (user_id, user_id),
         )
         wallets = cursor.fetchall()

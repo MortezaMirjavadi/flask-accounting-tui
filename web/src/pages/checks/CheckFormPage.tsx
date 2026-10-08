@@ -3,14 +3,16 @@ import { useTranslation } from "react-i18next";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion } from "framer-motion";
-import { useCreateCheck } from "@/hooks";
-import { checkSchema, type CheckFormData } from "@/schemas/check";
+import { useWalletContext } from "@/context/wallet-context";
+import { useCreateCheck, useCategoryTree } from "@/hooks";
+import { checkSchema, type CheckFormData, type CheckFormInput } from "@/schemas/check";
 import { CHECK_TYPES } from "@/lib/constants";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AmountInput } from "@/components/shared/AmountInput";
+import { CategoryTreeSelect } from "@/components/shared/CategoryTreeSelect";
 import { JalaliDatePicker } from "@/components/shared/JalaliDatePicker";
 import {
   Select,
@@ -35,9 +37,11 @@ export default function CheckFormPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const createCheck = useCreateCheck();
+  const { data: categoriesTree } = useCategoryTree();
+  const { activeWallet } = useWalletContext();
   const isMobile = useIsMobile();
 
-  const form = useForm<CheckFormData>({
+  const form = useForm<CheckFormInput, unknown, CheckFormData>({
     resolver: zodResolver(checkSchema),
     defaultValues: {
       check_number: "",
@@ -51,13 +55,19 @@ export default function CheckFormPage() {
   });
 
   const onSubmit = (data: CheckFormData) => {
-    createCheck.mutate(data, {
+    // Bind the check to the active wallet so it appears in the wallet-scoped
+    // checks list.
+    createCheck.mutate({ ...data, wallet_id: activeWallet?.id }, {
       onSuccess: () => {
         toast.success(t("common.success"));
         navigate("/checks");
       },
-      onError: () => {
-        toast.error(t("common.error"));
+      onError: (err) => {
+        toast.error(
+          err instanceof Error && err.message
+            ? err.message
+            : t("common.error"),
+        );
       },
     });
   };
@@ -159,6 +169,25 @@ export default function CheckFormPage() {
                   ))}
                 </SelectContent>
               </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="category_id"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t("transactions.category")}</FormLabel>
+              <FormControl>
+                <CategoryTreeSelect
+                  categories={categoriesTree ?? []}
+                  value={field.value || undefined}
+                  onChange={field.onChange}
+                  placeholder={t("common.select")}
+                />
+              </FormControl>
               <FormMessage />
             </FormItem>
           )}

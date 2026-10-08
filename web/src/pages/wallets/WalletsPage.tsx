@@ -31,7 +31,7 @@ import {
   useAcceptInvitation,
   useRejectInvitation,
 } from "@/hooks/wallets";
-import { walletSchema, type WalletFormData } from "@/schemas/wallet";
+import { walletSchema, type WalletFormData, type WalletFormInput } from "@/schemas/wallet";
 import type { Wallet as WalletType } from "@/types";
 import { SUPPORTED_CURRENCIES } from "@/types";
 import { formatToman, formatCurrency } from "@/lib/format";
@@ -70,13 +70,16 @@ const fadeUp = {
   show: { opacity: 1, y: 0, transition: { duration: 0.35 } },
 };
 
-const CURRENCY_LABELS: Record<string, string> = {
-  IRR: "IRR (تومان)",
-  USD: "USD ($)",
-  EUR: "EUR (€)",
-  GBP: "GBP (£)",
-  AED: "AED (د.إ)",
-};
+function useCurrencyLabels(): Record<string, string> {
+  const { t } = useTranslation();
+  return {
+    IRR: `IRR (${t("currencies.IRR")})`,
+    USD: `USD ($)`,
+    EUR: `EUR (€)`,
+    GBP: `GBP (£)`,
+    AED: `AED (د.إ)`,
+  };
+}
 
 function getVariantIcon(variant: string | null | undefined, size = "h-4 w-4") {
   const cls = size;
@@ -90,14 +93,17 @@ function getVariantIcon(variant: string | null | undefined, size = "h-4 w-4") {
   }
 }
 
-const VARIANT_OPTIONS = [
-  { value: "", label: "—" },
-  { value: "family", label: "family" },
-  { value: "team", label: "team" },
-  { value: "travel", label: "travel" },
-  { value: "business", label: "business" },
-  { value: "savings", label: "savings" },
-] as const;
+function useVariantOptions() {
+  const { t } = useTranslation();
+  return [
+    { value: "", label: t("wallets.variantNone") },
+    { value: "family", label: t("wallets.variantFamily") },
+    { value: "team", label: t("wallets.variantTeam") },
+    { value: "travel", label: t("wallets.variantTravel") },
+    { value: "business", label: t("wallets.variantBusiness") },
+    { value: "savings", label: t("wallets.variantSavings") },
+  ] as const;
+}
 
 function WalletCard({
   wallet,
@@ -113,7 +119,7 @@ function WalletCard({
   const bank = getBankById("cash");
   const isShared = wallet.wallet_type === "shared";
   const variantIcon = getVariantIcon(wallet.variant);
-  const displayBalance = wallet.total_balance ?? 0;
+  const displayBalance = Number(wallet.total_balance ?? 0);
 
   return (
     <motion.div variants={fadeUp}>
@@ -234,13 +240,15 @@ export default function WalletsPage() {
   const { data: invitationsResp } = useWalletInvitations();
   const invitations = invitationsResp?.items ?? [];
   const acceptInvitation = useAcceptInvitation();
+  const CURRENCY_LABELS = useCurrencyLabels();
+  const VARIANT_OPTIONS = useVariantOptions();
   const rejectInvitation = useRejectInvitation();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingWallet, setEditingWallet] = useState<WalletType | null>(null);
   const [deletingWallet, setDeletingWallet] = useState<WalletType | null>(null);
 
-  const form = useForm<WalletFormData>({
+  const form = useForm<WalletFormInput, unknown, WalletFormData>({
     resolver: zodResolver(walletSchema),
     defaultValues: {
       name: "",

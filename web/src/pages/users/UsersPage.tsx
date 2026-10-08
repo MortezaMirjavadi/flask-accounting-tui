@@ -147,8 +147,10 @@ function UserFormDialog({
 export default function UsersPage() {
   const { t } = useTranslation();
   const { isAdmin } = useAuth();
-  const { data: users, isLoading } = useUsers();
-  const { data: pendingUsers } = usePendingUsers();
+  const { data: usersResp, isLoading } = useUsers();
+  const users = usersResp?.items;
+  const { data: pendingUsersResp } = usePendingUsers();
+  const pendingUsers = pendingUsersResp?.items;
 
   const [tab, setTab] = useState<"all" | "pending">("all");
   const [formOpen, setFormOpen] = useState(false);
@@ -174,8 +176,17 @@ export default function UsersPage() {
     try {
       await action();
       toast.success(successMsg);
-    } catch {
-      toast.error(t("common.error"));
+    } catch (err: unknown) {
+      let message = t("common.error");
+      if (err && typeof err === "object" && "response" in err) {
+        const axiosErr = err as { response?: { data?: { error?: string } } };
+        if (axiosErr.response?.data?.error) {
+          message = axiosErr.response.data.error;
+        }
+      } else if (err instanceof Error && err.message) {
+        message = err.message;
+      }
+      toast.error(message);
     }
   }
 

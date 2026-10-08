@@ -9,7 +9,7 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, DataTable, Digits, Footer, Header, Input, Label, Rule, Select, Static
 
-from tui.api import api_get, api_delete, handle_response, format_toman
+from tui.api import api_get, api_delete, extract_items, handle_response, format_toman
 from tui.widgets import ConfirmBox, HelpTip, MessageBox, StatusBar
 
 
@@ -70,18 +70,23 @@ class BaseListScreen(Screen):
         table.zebra_stripes = True
         self.load_data()
 
+    @staticmethod
+    def _extract_items(data):
+        """Extract list items from either a plain list or a paginated response dict."""
+        return extract_items(data)
+
     def load_data(self, params=None):
         table = self.query_one("#data_table", DataTable)
         table.clear()
-        
+
         resp = api_get(self.api_endpoint, params=params, username=self.app.user.get("username"))
         data, err = handle_response(resp)
-        
+
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
-        
-        self._data = data or []
+
+        self._data = extract_items(data)
         self.populate_table(table)
         self.update_detail()
 
@@ -373,7 +378,7 @@ class DashboardScreen(Screen):
             with Vertical(id="dash-left"):
                 with Horizontal(classes="dash-btn-row"):
                     yield Label("Wallets", classes="dash-section-title")
-                    yield Button("Add Wallet", variant="error", id="btn-add-wallet")
+                    yield Button("➕ Wallet", variant="error", id="btn-add-wallet")
                 with Vertical(id="balance-container"):
                     yield Label("Total Balance", id="balance-label")
                     yield Digits("0", id="balance-digits")
@@ -385,7 +390,7 @@ class DashboardScreen(Screen):
             with Vertical(id="dash-right"):
                 with Horizontal(classes="dash-btn-row"):
                     yield Label("Today's Transactions", classes="dash-section-title")
-                    yield Button("Add Transaction", variant="error", id="btn-add-tx")
+                    yield Button("➕ Transaction", variant="error", id="btn-add-tx")
                 with Horizontal(id="tx-summary-row"):
                     with Vertical(classes="tx-metric"):
                         yield Label("Income", classes="tx-metric-label")
@@ -417,6 +422,13 @@ class DashboardScreen(Screen):
         self.load_wallets()
         self.load_today_transactions()
 
+    @staticmethod
+    def _extract_items(data):
+        """Extract list items from either a plain list or a paginated response dict."""
+        if isinstance(data, dict) and "items" in data:
+            return data["items"] or []
+        return data or []
+
     def load_wallets(self):
         src_table = self.query_one("#wallets-table", DataTable)
         src_table.clear()
@@ -431,7 +443,7 @@ class DashboardScreen(Screen):
             count_label.update(f"[red]Error: {err}[/red]")
             return
 
-        self._wallets = data or []
+        self._wallets = self._extract_items(data)
         if not self._wallets:
             digits.update("0")
             count_label.update("[dim]No wallets found[/dim]")
@@ -472,7 +484,61 @@ class DashboardScreen(Screen):
             count_label.update(f"[red]Error: {err}[/red]")
             return
 
-        self._today_txs = data or []
+        self._today_txs = self._extract_items(data)
+        if not self._today_txs:
+            income_digits.update("0")
+            cost_digits.update("0")
+            net_digits.update("0")
+            count_label.update(f"[dim]No transactions today ({today_str})[/dim]")
+            return
+
+        total_income = 0.0
+        total_cost = 0.0
+        rows = []
+        for t in self._today_txs:
+            amount = float(t.get("amount", 0))
+            cat_type = t.get("category_type", "")
+            if cat_type == "income" or t.get("is_transfer"):
+                total_income += amount
+            else:
+                total_cost += amount
+
+            desc = t.get("description") or t.get("category_name") or "-"
+            rows.append((t.get("date", ""), desc[:30], format_toman(amount)))
+
+        tx_table.add_rows(rows)
+        net = total_income - total_cost
+        income_digits.update(f"{total_income:,.0f}")
+        cost_digits.update(f"{total_cost:,.0f}")
+        net_digits.update(f"{net:,.0f}")
+        count_label.update(f"[dim]{len(self._today_txs)} transactions today[/dim]")
+
+        tx_table = self.query_one("#tx-table", DataTable)
+        tx_table.clear()
+        income_digits = self.query_one("#tx-income", Digits)
+        cost_digits = self.query_one("#tx-cost", Digits)
+        net_digits = self.query_one("#tx-net", Digits)
+        count_label = self.query_one("#tx-count", Static)
+
+        now = datetime.now()
+        jalali_now = jdatetime.datetime.fromgregorian(datetime=now)
+        today_str = jalali_now.strftime("%Y-%m-%d")
+
+        resp = api_get(
+            "/transactions",
+            params={"date_from": today_str, "date_to": today_str, "include_transfers": 1},
+            username=self.app.user.get("username"),
+        )
+        data, err = handle_response(resp)
+
+        if err:
+            income_digits.update("0")
+            cost_digits.update("0")
+            net_digits.update("0")
+            count_label.update(f"[red]Error: {err}[/red]")
+            return
+
+        self._today_txs = extract_items(data)
         if not self._today_txs:
             income_digits.update("0")
             cost_digits.update("0")

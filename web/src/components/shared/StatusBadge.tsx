@@ -1,7 +1,8 @@
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 
 interface StatusBadgeProps {
-  status: string;
+  status: string | null | undefined;
   className?: string;
 }
 
@@ -13,13 +14,22 @@ const statusStyles: Record<string, string> = {
   cleared: "bg-success/10 text-success border-success/20",
   bounced: "bg-destructive/10 text-destructive border-destructive/20",
   canceled: "bg-muted text-muted-foreground border-border",
+  cancelled: "bg-muted text-muted-foreground border-border",
   settled: "bg-success/10 text-success border-success/20",
   written_off: "bg-muted text-muted-foreground border-border",
+  partially_paid: "bg-warning/10 text-warning border-warning/20",
+  completed: "bg-success/10 text-success border-success/20",
   closed: "bg-muted text-muted-foreground border-border",
 };
 
 export function StatusBadge({ status, className }: StatusBadgeProps) {
-  const style = statusStyles[status] || "bg-muted text-muted-foreground border-border";
+  const { t } = useTranslation();
+
+  // Status can be null (e.g. a debt's first history row has old_status = NULL).
+  const style = statusStyles[status ?? ""] || "bg-muted text-muted-foreground border-border";
+  const label = status
+    ? t(`common.${status}`, { defaultValue: status.replace(/_/g, " ") })
+    : "—";
 
   return (
     <span
@@ -29,7 +39,7 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
         className,
       )}
     >
-      {status.replace(/_/g, " ")}
+      {label}
     </span>
   );
 }

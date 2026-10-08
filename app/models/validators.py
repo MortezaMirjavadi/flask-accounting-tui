@@ -28,13 +28,22 @@ def validate_category_payload(data):
     """Validate category payload."""
     name = data.get("name", "").strip()
     cat_type = data.get("type", "").strip().lower()
+    parent_id = data.get("parent_id")
 
     if not name:
         raise ValueError("نام دسته‌بندی الزامی است")
     if cat_type not in ("income", "cost"):
         raise ValueError("نوع دسته‌بندی باید 'income' یا 'cost' باشد")
 
-    return {"name": name, "type": cat_type}
+    if parent_id is not None:
+        try:
+            parent_id = int(parent_id)
+            if parent_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValueError("شناسه دسته‌بندی والد نامعتبر است")
+
+    return {"name": name, "type": cat_type, "parent_id": parent_id}
 
 
 def validate_source_payload(data):
@@ -467,6 +476,15 @@ def validate_debt_payload(data):
         except (TypeError, ValueError):
             raise ValueError("شناسه کیف پول باید عدد صحیح مثبت باشد")
 
+    category_id = data.get("category_id")
+    if category_id is not None:
+        try:
+            category_id = int(category_id)
+            if category_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValueError("شناسه دسته‌بندی باید عدد صحیح مثبت باشد")
+
     reference_type = (data.get("reference_type") or "").strip() or None
     reference_id = data.get("reference_id")
     if reference_id is not None:
@@ -503,6 +521,7 @@ def validate_debt_payload(data):
         "due_date": due_date,
         "priority": priority,
         "wallet_id": wallet_id,
+        "category_id": category_id,
         "reference_type": reference_type,
         "reference_id": reference_id,
         "has_interest": has_interest,
@@ -539,6 +558,15 @@ def validate_debt_payment_payload(data):
         except (TypeError, ValueError):
             raise ValueError("شناسه کیف پول باید عدد صحیح مثبت باشد")
 
+    category_id = data.get("category_id")
+    if category_id is not None:
+        try:
+            category_id = int(category_id)
+            if category_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValueError("شناسه دسته‌بندی باید عدد صحیح مثبت باشد")
+
     note = (data.get("note") or "").strip() or None
 
     return {
@@ -546,5 +574,6 @@ def validate_debt_payment_payload(data):
         "payment_date": payment_date,
         "payment_method": payment_method,
         "wallet_id": wallet_id,
+        "category_id": category_id,
         "note": note,
     }

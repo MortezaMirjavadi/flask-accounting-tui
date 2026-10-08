@@ -1,11 +1,11 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Pencil, Trash2, Search } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import {
-  useCategories,
+  useCategoryTree,
   useCreateCategory,
   useUpdateCategory,
   useDeleteCategory,
@@ -14,16 +14,8 @@ import { categorySchema, type CategoryFormData } from "@/schemas/category";
 import type { Category } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TreeView } from "@/components/ui/tree-view";
 import { ResponsiveDialog } from "@/components/shared/ResponsiveDialog";
 import {
   Select,
@@ -42,10 +34,38 @@ import {
 } from "@/components/ui/form";
 import { toast } from "sonner";
 
+// Flatten tree for parent dropdown
+function flattenTree(nodes: Category[], depth = 0): { node: Category; depth: number }[] {
+  const result: { node: Category; depth: number }[] = [];
+  for (const node of nodes) {
+    result.push({ node, depth });
+    if (node.children) {
+      result.push(...flattenTree(node.children, depth + 1));
+    }
+  }
+  return result;
+}
+
+// Filter tree nodes by search
+function filterTree(nodes: Category[], query: string): Category[] {
+  const q = query.toLowerCase();
+  const result: Category[] = [];
+  for (const node of nodes) {
+    const childMatches = node.children ? filterTree(node.children, query) : [];
+    const selfMatch = node.name.toLowerCase().includes(q);
+    if (selfMatch || childMatches.length > 0) {
+      result.push({
+        ...node,
+        children: selfMatch ? node.children : childMatches,
+      });
+    }
+  }
+  return result;
+}
+
 export default function CategoriesPage() {
   const { t } = useTranslation();
-  const { data: categoriesResp, isLoading } = useCategories();
-  const categories = categoriesResp?.items;
+  const { data: tree, isLoading } = useCategoryTree();
   const createMutation = useCreateCategory();
   const updateMutation = useUpdateCategory();
   const deleteMutation = useDeleteCategory();
@@ -53,52 +73,72 @@ export default function CategoriesPage() {
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
-  const [deletingCategory, setDeletingCategory] = useState<Category | null>(
-    null,
-  );
+  const [parentForNew, setParentForNew] = useState<Category | null>(null);
+  const [deletingCategory, setDeletingCategory] = useState<Category | null>(null);
 
   const form = useForm<CategoryFormData>({
     resolver: zodResolver(categorySchema),
     defaultValues: {
       name: "",
       type: "cost",
+      parent_id: null,
     },
   });
 
+  const treeData = tree ?? [];
   const filtered = useMemo(() => {
-    if (!categories) return [];
-    if (!search.trim()) return categories;
-    const q = search.toLowerCase();
-    return categories.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) || c.type.toLowerCase().includes(q),
-    );
-  }, [categories, search]);
+    if (!search.trim()) return treeData;
+    return filterTree(treeData, search);
+  }, [treeData, search]);
 
-  function openCreate() {
-    setEditingCategory(null);
-    form.reset({ name: "", type: "cost" });
-    setDialogOpen(true);
-  }
+  const flatCategories = useMemo(() => flattenTree(treeData), [treeData]);
 
-  function openEdit(category: Category) {
-    setEditingCategory(category);
-    form.reset({ name: category.name, type: category.type });
-    setDialogOpen(true);
-  }
+  const openCreate = useCallback(
+    (parent?: Category) => {
+      setEditingCategory(null);
+      setParentForNew(parent ?? null);
+      form.reset({
+        name: "",
+        type: parent?.type ?? "cost",
+        parent_id: parent?.id ?? null,
+      });
+      setDialogOpen(true);
+    },
+    [form],
+  );
+
+  const openEdit = useCallback(
+    (category: Category) => {
+      setEditingCategory(category);
+      setParentForNew(null);
+      form.reset({
+        name: category.name,
+        type: category.type,
+        parent_id: category.parent_id,
+      });
+      setDialogOpen(true);
+    },
+    [form],
+  );
 
   async function onSubmit(data: CategoryFormData) {
     try {
+      // Ensure parent_id is null (not undefined) for the API
+      const payload = { ...data, parent_id: data.parent_id ?? null };
       if (editingCategory) {
-        await updateMutation.mutateAsync({ id: editingCategory.id, data });
+        await updateMutation.mutateAsync({ id: editingCategory.id, data: payload });
         toast.success(t("common.success"));
       } else {
-        await createMutation.mutateAsync(data);
+        await createMutation.mutateAsync(payload);
         toast.success(t("common.success"));
       }
       setDialogOpen(false);
-    } catch {
-      toast.error(t("common.error"));
+    } catch (err: unknown) {
+      let message = t("common.error");
+      if (err instanceof Error && err.message) {
+        message = err.message;
+      }
+      toast.error(message);
     }
   }
 
@@ -108,8 +148,12 @@ export default function CategoriesPage() {
       await deleteMutation.mutateAsync(deletingCategory.id);
       toast.success(t("common.success"));
       setDeletingCategory(null);
-    } catch {
-      toast.error(t("common.error"));
+    } catch (err: unknown) {
+      let message = t("common.error");
+      if (err instanceof Error && err.message) {
+        message = err.message;
+      }
+      toast.error(message);
     }
   }
 
@@ -117,6 +161,9 @@ export default function CategoriesPage() {
     createMutation.isPending ||
     updateMutation.isPending ||
     deleteMutation.isPending;
+
+  // Watch the type field to lock it when adding subcategory
+  const watchedType = form.watch("type");
 
   return (
     <motion.div
@@ -127,7 +174,7 @@ export default function CategoriesPage() {
     >
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">{t("categories.title")}</h1>
-        <Button onClick={openCreate}>
+        <Button onClick={() => openCreate()}>
           <Plus className="h-4 w-4" />
           {t("categories.addTitle")}
         </Button>
@@ -144,71 +191,22 @@ export default function CategoriesPage() {
         />
       </div>
 
-      {/* Table */}
+      {/* Tree View */}
       {isLoading ? (
         <div className="space-y-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Skeleton key={i} className="h-12 w-full" />
+          {Array.from({ length: 8 }).map((_, i) => (
+            <Skeleton key={i} className="h-9 w-full" />
           ))}
         </div>
-      ) : filtered.length === 0 ? (
-        <p className="py-12 text-center text-muted-foreground">
-          {t("common.noData")}
-        </p>
       ) : (
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t("categories.categoryName")}</TableHead>
-                <TableHead>{t("categories.categoryType")}</TableHead>
-                <TableHead className="w-24 text-end">
-                  {t("common.actions")}
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((category) => (
-                <TableRow key={category.id}>
-                  <TableCell className="font-medium">
-                    {category.name}
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant="outline"
-                      className={
-                        category.type === "income"
-                          ? "border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-400"
-                          : "border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-400"
-                      }
-                    >
-                      {category.type === "income"
-                        ? t("common.income")
-                        : t("common.cost")}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-end">
-                    <div className="flex items-center justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => openEdit(category)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setDeletingCategory(category)}
-                      >
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+        <div className="rounded-md border p-2">
+          <TreeView
+            nodes={filtered}
+            onAddChild={(parent) => openCreate(parent)}
+            onEdit={openEdit}
+            onDelete={setDeletingCategory}
+            defaultExpanded
+          />
         </div>
       )}
 
@@ -216,7 +214,13 @@ export default function CategoriesPage() {
       <ResponsiveDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        title={editingCategory ? t("categories.editTitle") : t("categories.addTitle")}
+        title={
+          editingCategory
+            ? t("categories.editTitle")
+            : parentForNew
+              ? `${t("categories.addTitle")} (${parentForNew.name})`
+              : t("categories.addTitle")
+        }
       >
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
@@ -233,6 +237,7 @@ export default function CategoriesPage() {
                 </FormItem>
               )}
             />
+
             <FormField
               control={form.control}
               name="type"
@@ -241,7 +246,8 @@ export default function CategoriesPage() {
                   <FormLabel>{t("categories.categoryType")}</FormLabel>
                   <Select
                     onValueChange={field.onChange}
-                    defaultValue={field.value}
+                    value={field.value}
+                    disabled={!!parentForNew}
                   >
                     <FormControl>
                       <SelectTrigger>
@@ -249,18 +255,56 @@ export default function CategoriesPage() {
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="income">
-                        {t("common.income")}
-                      </SelectItem>
-                      <SelectItem value="cost">
-                        {t("common.cost")}
-                      </SelectItem>
+                      <SelectItem value="income">{t("common.income")}</SelectItem>
+                      <SelectItem value="cost">{t("common.cost")}</SelectItem>
                     </SelectContent>
                   </Select>
                   <FormMessage />
                 </FormItem>
               )}
             />
+
+            {/* Parent selector (only when adding a root category or editing) */}
+            {!parentForNew && (
+              <FormField
+                control={form.control}
+                name="parent_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t("categories.parent")}</FormLabel>
+                    <Select
+                      onValueChange={(val) =>
+                        field.onChange(val === "none" ? null : Number(val))
+                      }
+                      value={field.value ? String(field.value) : "none"}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="none">
+                          {t("categories.noParent")}
+                        </SelectItem>
+                        {flatCategories
+                          .filter(
+                            ({ node }) =>
+                              !editingCategory || node.id !== editingCategory.id,
+                          )
+                          .map(({ node, depth }) => (
+                            <SelectItem key={node.id} value={String(node.id)}>
+                              {" ".repeat(depth)} {node.name}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
             <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button
                 type="button"
@@ -282,13 +326,14 @@ export default function CategoriesPage() {
         open={!!deletingCategory}
         onOpenChange={() => setDeletingCategory(null)}
         title={t("common.areYouSure")}
-        description={t("common.deleteConfirm")}
+        description={
+          deletingCategory?.children && deletingCategory.children.length > 0
+            ? t("categories.deleteWithChildren")
+            : t("common.deleteConfirm")
+        }
       >
         <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button
-            variant="outline"
-            onClick={() => setDeletingCategory(null)}
-          >
+          <Button variant="outline" onClick={() => setDeletingCategory(null)}>
             {t("common.cancel")}
           </Button>
           <Button

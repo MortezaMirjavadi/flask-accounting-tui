@@ -9,7 +9,7 @@ from textual.widgets import (
     ListItem, ListView, Select, Static, Rule, TextArea,
 )
 
-from tui.api import api_get, api_post, api_put, api_delete, handle_response, format_toman
+from tui.api import api_get, api_post, api_put, api_delete, extract_items, handle_response, format_toman
 from tui.jalali_date_picker import JalaliDatePicker
 from tui.widgets import ConfirmBox, HelpTip, MessageBox, StatusBar
 
@@ -207,8 +207,8 @@ class DebtListScreen(Screen):
                     value="all", id="debt_filter_status", allow_blank=False,
                 )
                 yield Input(placeholder="Counterparty", id="debt_filter_cp")
-                yield Button("Filter", variant="primary", id="debt_filter_btn")
-                yield Button("Reset", variant="default", id="debt_reset_btn")
+                yield Button("🔍 Filter", variant="primary", id="debt_filter_btn")
+                yield Button("🔄 Reset", variant="default", id="debt_reset_btn")
             with Horizontal(classes="split_row"):
                 with Vertical(classes="left_pane"):
                     yield DataTable(id="debt_table")
@@ -239,7 +239,7 @@ class DebtListScreen(Screen):
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
-        self._data = data or []
+        self._data = extract_items(data)
         if not self._data:
             table.add_row("-", "-", "-", "No debts found", "-", "-", "-", "-")
         else:
@@ -630,8 +630,8 @@ class DebtAddScreen(Screen):
                 yield Label("Notes (optional):")
                 yield TextArea(id="debt_desc")
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", variant="default", id="cancel")
+                yield Button("💾 Save", variant="primary", id="save")
+                yield Button("✖ Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")
@@ -653,7 +653,7 @@ class DebtAddScreen(Screen):
         if err:
             return
         if data:
-            self._wallet_options = [(s["name"], s["id"]) for s in data]
+            self._wallet_options = [(s["name"], s["id"]) for s in extract_items(data)]
             self.query_one("#debt_wallet", Select).set_options(
                 [("None", None)] + self._wallet_options
             )
@@ -766,8 +766,8 @@ class DebtPaymentScreen(Screen):
                 yield Label("Note (optional):")
                 yield Input(placeholder="e.g. partial payment", id="pay_note")
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", variant="default", id="cancel")
+                yield Button("💾 Save", variant="primary", id="save")
+                yield Button("✖ Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")
@@ -788,7 +788,7 @@ class DebtPaymentScreen(Screen):
         if err:
             return
         if data:
-            options = [(s["name"], s["id"]) for s in data]
+            options = [(s["name"], s["id"]) for s in extract_items(data)]
             self.query_one("#pay_wallet", Select).set_options([("None", None)] + options)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

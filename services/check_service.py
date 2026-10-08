@@ -7,6 +7,7 @@ from datetime import date, timedelta
 
 from database import get_connection, release_connection
 from services.commitment_utils import (
+    check_cleared_description,
     coerce_date,
     coerce_positive_decimal,
     create_settlement_transaction,
@@ -177,7 +178,7 @@ class CheckService:
             release_connection(conn)
 
     @staticmethod
-    def mark_check_cleared(user_id: int, check_id: int, *, cleared_date: str | date | None = None) -> dict:
+    def mark_check_cleared(user_id: int, check_id: int, *, cleared_date: str | date | None = None, locale: str = "en") -> dict:
         if cleared_date is None:
             cleared_date_value = date.today()
         else:
@@ -188,7 +189,7 @@ class CheckService:
         try:
             cursor.execute(
                 """
-                SELECT id, type, category_id, wallet_id, amount, status, transaction_id
+                SELECT id, check_number, type, category_id, wallet_id, amount, status, transaction_id
                 FROM checks
                 WHERE id = %s AND user_id = %s AND deleted_at IS NULL
                 """,
@@ -215,7 +216,7 @@ class CheckService:
                 amount=to_decimal(row["amount"]),
                 category_id=row["category_id"],
                 wallet_id=row["wallet_id"],
-                description=f"Check #{row['id']} cleared",
+                description=check_cleared_description(row["check_number"], locale),
                 reference_type="check",
                 reference_id=row["id"],
             )

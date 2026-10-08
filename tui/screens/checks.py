@@ -9,7 +9,7 @@ from textual.widgets import (
     ListItem, ListView, Select, Static, Rule, TextArea
 )
 
-from tui.api import api_get, api_post, api_put, api_delete, handle_response, format_toman
+from tui.api import api_get, api_post, api_put, api_delete, extract_items, handle_response, format_toman
 from tui.widgets import ConfirmBox, HelpTip, MessageBox, StatusBar
 from app.utils.helpers import jalali_to_gregorian, gregorian_to_jalali
 
@@ -103,8 +103,8 @@ class CheckListScreen(Screen):
                     prompt="Type",
                     id="chk_filter_type",
                 )
-                yield Button("Filter", variant="primary", id="chk_filter_btn")
-                yield Button("Reset", variant="default", id="chk_reset_btn")
+                yield Button("🔍 Filter", variant="primary", id="chk_filter_btn")
+                yield Button("🔄 Reset", variant="default", id="chk_reset_btn")
             with Horizontal(classes="split_row"):
                 with Vertical(classes="left_pane"):
                     yield DataTable(id="chk_table")
@@ -136,7 +136,7 @@ class CheckListScreen(Screen):
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
-        self._data = data or []
+        self._data = extract_items(data)
         if not self._data:
             table.add_row("-", "-", "No checks", "-", "-", "-", "-")
         else:
@@ -390,8 +390,8 @@ class CheckAddScreen(Screen):
                 yield Label("Description (optional):")
                 yield TextArea(id="chk_desc")
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", variant="default", id="cancel")
+                yield Button("💾 Save", variant="primary", id="save")
+                yield Button("✖ Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")
@@ -410,7 +410,7 @@ class CheckAddScreen(Screen):
             select.set_options([])
             select.prompt = "No categories"
         else:
-            options = [(f"{c['name']} ({c['type']})", c["id"]) for c in data]
+            options = [(f"{c['name']} ({c['type']})", c["id"]) for c in extract_items(data)]
             select.set_options(options)
             select.prompt = "Select category"
 
@@ -422,7 +422,7 @@ class CheckAddScreen(Screen):
             select.set_options([])
             select.prompt = "No wallets"
         else:
-            options = [(s["name"], s["id"]) for s in data]
+            options = [(s["name"], s["id"]) for s in extract_items(data)]
             select.set_options(options)
             select.prompt = "Select wallet"
 
@@ -541,8 +541,8 @@ class CheckEditScreen(Screen):
                 yield Label("Description (optional):")
                 yield TextArea(id="chk_desc")
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", variant="default", id="cancel")
+                yield Button("💾 Save", variant="primary", id="save")
+                yield Button("✖ Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")
@@ -555,7 +555,7 @@ class CheckEditScreen(Screen):
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
-        self._data = data
+        self._data = extract_items(data)
         issue_jalali = gregorian_to_jalali(data.get("issue_date", "")) if data.get("issue_date") else ""
         due_jalali = gregorian_to_jalali(data.get("due_date", "")) if data.get("due_date") else ""
         self.query_one("#chk_number", Input).value = data.get("check_number") or ""

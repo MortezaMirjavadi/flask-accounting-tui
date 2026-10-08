@@ -384,7 +384,8 @@ export default function CalendarPage() {
     const firstGregorian = jalaali.toGregorian(selectedDate.jy, month, 1);
     const firstDate = new Date(firstGregorian.gy, firstGregorian.gm - 1, firstGregorian.gd);
     const startCol = (firstDate.getDay() + 1) % 7;
-    const cellCount = Math.ceil((startCol + daysInMonth) / 7) * 7;
+    // Always render 6 rows (42 cells) so every month card has identical height
+    const cellCount = 42;
     const days = Array.from({ length: cellCount }, (_, index) => {
       const d = addDays(firstDate, index - startCol);
       const gregDate = formatGregorianDate(d);
@@ -395,21 +396,21 @@ export default function CalendarPage() {
     return (
       <button
         type="button"
-        className="rounded-md border p-2 text-start transition-colors hover:bg-muted/50"
+        className="flex h-full w-full flex-col rounded-md border p-3 text-start transition-colors hover:bg-muted/50"
         onClick={() => {
           setSelectedDate({ jy: selectedDate.jy, jm: month, jd: 1 });
           setViewMode("monthly");
         }}
       >
-        <p className="mb-1 text-xs font-semibold">{getJalaliMonthName(month)}</p>
-        <div className="grid grid-cols-7 gap-0.5">
+        <p className="mb-2 shrink-0 text-sm font-semibold">{getJalaliMonthName(month)}</p>
+        <div className="grid flex-1 grid-cols-7 gap-0">
           {WEEKDAY_LABELS.map((l) => (
-            <div key={l} className="text-center text-[8px] text-muted-foreground">{l}</div>
+            <div key={l} className="text-center text-[10px] text-muted-foreground">{l}</div>
           ))}
           {days.map((d, i) => (
             <div
               key={i}
-              className={`flex h-4 items-center justify-center text-[8px] ${d.inMonth ? "" : "text-muted-foreground/30"}`}
+              className={`flex items-center justify-center text-xs ${d.inMonth ? "" : "text-muted-foreground/30"}`}
             >
               {d.day > 0 ? d.day : ""}
               {d.hasEvents && d.inMonth && <span className="absolute mt-2.5 h-1 w-1 rounded-full bg-primary" />}
@@ -481,9 +482,9 @@ export default function CalendarPage() {
         </div>
       ) : viewMode === "yearly" ? (
         <div className="min-h-0 flex-1 overflow-auto">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+          <div className="grid auto-rows-fr grid-cols-2 gap-0 sm:grid-cols-3 md:grid-cols-4 [&>*]:min-h-44">
             {Array.from({ length: 12 }, (_, i) => i + 1).map((month) => (
-              <div key={month}>{renderMiniMonth(month)}</div>
+              <div key={month} className="p-0.5">{renderMiniMonth(month)}</div>
             ))}
           </div>
         </div>

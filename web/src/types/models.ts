@@ -22,6 +22,10 @@ export interface Category {
   user_id: number;
   name: string;
   type: "income" | "cost";
+  parent_id: number | null;
+  parent_name?: string;
+  children?: Category[];
+  _depth?: number;
   created_at: string;
   updated_at: string;
 }
@@ -321,6 +325,8 @@ export interface Debt {
   priority: string;
   reference_type: string | null;
   reference_id: number | null;
+  wallet_id: number | null;
+  category_id: number | null;
   source_id: number | null;
   has_interest: boolean;
   interest_type: string | null;
@@ -548,11 +554,17 @@ export interface Setup2FAResponse {
 }
 
 export interface DebtSummary {
-  total_payable: number;
-  total_receivable: number;
-  net: number;
+  payable_total: number;
+  receivable_total: number;
+  net_position: number;
   overdue_count: number;
-  due_soon_count: number;
+  overdue_amount: number;
+  due_soon: { count: number; total: string };
+  by_status: Record<
+    string,
+    Record<string, { count: number; total_original: number; total_remaining: number }>
+  >;
+  recent_payments: DebtPayment[];
 }
 
 export interface FinancialEvent {

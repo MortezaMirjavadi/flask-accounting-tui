@@ -9,7 +9,7 @@ from textual.widgets import (
     ListItem, ListView, Static, Rule
 )
 
-from tui.api import api_get, api_post, api_put, api_delete, handle_response, format_toman
+from tui.api import api_get, api_post, api_put, api_delete, extract_items, handle_response, format_toman
 from tui.widgets import ConfirmBox, HelpTip, MessageBox, StatusBar
 
 
@@ -79,8 +79,8 @@ class WalletListScreen(Screen):
             yield Rule()
             with Horizontal(classes="filter_row"):
                 yield Input(placeholder="Filter by name", id="src_filter_name")
-                yield Button("Filter", variant="primary", id="src_filter_btn")
-                yield Button("Reset", variant="default", id="src_reset_btn")
+                yield Button("🔍 Filter", variant="primary", id="src_filter_btn")
+                yield Button("🔄 Reset", variant="default", id="src_reset_btn")
             with Horizontal(classes="split_row"):
                 with Vertical(classes="left_pane"):
                     yield DataTable(id="src_table")
@@ -109,7 +109,7 @@ class WalletListScreen(Screen):
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
-        self._data = data or []
+        self._data = extract_items(data)
         if not self._data:
             table.add_row("-", "No wallets found", "-", "-")
         else:
@@ -259,8 +259,8 @@ class WalletAddScreen(Screen):
             yield Input(placeholder="personal", id="src_wallet_type", value="personal")
             yield Static("")
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", variant="default", id="cancel")
+                yield Button("💾 Save", variant="primary", id="save")
+                yield Button("✖ Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")
@@ -331,8 +331,8 @@ class WalletEditScreen(Screen):
             yield Input(placeholder="personal", id="src_wallet_type")
             yield Static("")
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", variant="default", id="cancel")
+                yield Button("💾 Save", variant="primary", id="save")
+                yield Button("✖ Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")

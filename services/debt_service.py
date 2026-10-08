@@ -4,6 +4,20 @@ import math
 from datetime import date, timedelta
 
 from database import get_connection, release_connection
+from services.commitment_utils import (
+    create_settlement_transaction,
+    get_category_type,
+    to_decimal,
+)
+
+# History notes are user-facing: rendered in Persian (the app's primary locale),
+# including Persian digits and thousands separators.
+_FA_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+
+def _fa_amount(amount) -> str:
+    """Format an amount with Persian digits, e.g. 1000000 → '۱٬۰۰۰٬۰۰۰'."""
+    return f"{float(amount):,.0f}".translate(_FA_DIGITS).replace(",", "٬")
 
 
 class DebtService:
@@ -32,13 +46,13 @@ class DebtService:
                     user_id, type, counterparty_name, counterparty_type,
                     title, description, original_amount, remaining_amount,
                     issue_date, due_date, status, priority,
-                    wallet_id, reference_type, reference_id,
+                    wallet_id, category_id, reference_type, reference_id,
                     has_interest, interest_type, interest_rate
                 ) VALUES (
                     %s, %s, %s, %s,
                     %s, %s, %s, %s,
                     %s, %s, %s, %s,
-                    %s, %s, %s,
+                    %s, %s, %s, %s,
                     %s, %s, %s
                 )
                 RETURNING *
@@ -50,7 +64,8 @@ class DebtService:
                     data["original_amount"], remaining,
                     data["issue_date"], data.get("due_date"), status,
                     data["priority"],
-                    data.get("wallet_id"), data.get("reference_type"),
+                    data.get("wallet_id"), data.get("category_id"),
+                    data.get("reference_type"),
                     data.get("reference_id"),
                     data.get("has_interest", False),
                     data.get("interest_type"), data.get("interest_rate"),
@@ -62,7 +77,7 @@ class DebtService:
             cursor.execute(
                 """
                 INSERT INTO debt_status_history (debt_id, old_status, new_status, note)
-                VALUES (%s, NULL, %s, 'Created')
+                VALUES (%s, NULL, %s, 'بدهی ثبت شد')
                 """,
                 (row["id"], status),
             )
@@ -99,6 +114,7 @@ class DebtService:
                     due_date = %s,
                     priority = %s,
                     wallet_id = %s,
+                    category_id = %s,
                     has_interest = %s,
                     interest_type = %s,
                     interest_rate = %s
@@ -113,6 +129,7 @@ class DebtService:
                     data.get("due_date", existing["due_date"]),
                     data.get("priority", existing["priority"]),
                     data.get("wallet_id", existing["wallet_id"]),
+                    data.get("category_id", existing.get("category_id")),
                     data.get("has_interest", existing["has_interest"]),
                     data.get("interest_type", existing["interest_type"]),
                     data.get("interest_rate", existing["interest_rate"]),
@@ -237,6 +254,35 @@ class DebtService:
             )
             payment = dict(cursor.fetchone())
 
+            # Register the matching wallet transaction so the payment is
+            # reflected in balances and reports (payable → cost, receivable →
+            # income). Requires a category: from the payload or the debt.
+            category_id = data.get("category_id") or debt.get("category_id")
+            if category_id:
+                expected_type = "cost" if debt["type"] == "payable" else "income"
+                category_type = get_category_type(cursor, category_id, user_id)
+                if category_type != expected_type:
+                    conn.rollback()
+                    return None, (
+                        f"نوع دسته‌بندی باید '{expected_type}' برای بدهی‌های {debt['type']} باشد"
+                    )
+                tx_id = create_settlement_transaction(
+                    cursor,
+                    user_id,
+                    tx_date=data["payment_date"],
+                    amount=to_decimal(amount),
+                    category_id=category_id,
+                    wallet_id=data.get("wallet_id") or debt.get("wallet_id"),
+                    description=f"پرداخت بدهی {debt['title']}",
+                    reference_type="debt_payment",
+                    reference_id=payment["id"],
+                )
+                cursor.execute(
+                    "UPDATE debt_payments SET transaction_id = %s WHERE id = %s",
+                    (tx_id, payment["id"]),
+                )
+                payment["transaction_id"] = tx_id
+
             # Update remaining amount
             new_remaining = float(debt["remaining_amount"]) - amount
             new_status = "settled" if new_remaining <= 0 else (
@@ -256,7 +302,7 @@ class DebtService:
                     VALUES (%s, %s, %s, %s)
                     """,
                     (debt_id, debt["status"], new_status,
-                     f"Payment of {amount} received"),
+                     f"پرداخت {_fa_amount(amount)} تومان دریافت شد"),
                 )
 
             conn.commit()
@@ -298,6 +344,13 @@ class DebtService:
                 (payment_id,),
             )
 
+            # Soft-delete the linked wallet transaction (if one was registered)
+            if row["transaction_id"] is not None:
+                cursor.execute(
+                    "UPDATE transactions SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s",
+                    (row["transaction_id"],),
+                )
+
             # Update debt
             new_status = "active" if new_remaining >= float(row["original_amount"]) else (
                 "partially_paid" if new_remaining > 0 else "settled"
@@ -313,7 +366,7 @@ class DebtService:
                 VALUES (%s, %s, %s, %s)
                 """,
                 (debt_id, row["debt_status"], new_status,
-                 f"Payment #{payment_id} reversed ({amount})"),
+                 f"بازگشت پرداخت شماره {_fa_amount(payment_id)} ({_fa_amount(amount)} تومان)"),
             )
 
             conn.commit()
@@ -355,13 +408,13 @@ class DebtService:
     def write_off(debt_id, user_id, note=None):
         """Mark a debt as written off (uncollectible)."""
         return DebtService._transition(debt_id, user_id, "written_off",
-                                        note or "Written off as uncollectible")
+                                        note or "به‌عنوان غیرقابل وصول ابطال شد")
 
     @staticmethod
     def cancel_debt(debt_id, user_id, note=None):
         """Cancel a debt (erroneous or cancelled by agreement)."""
         return DebtService._transition(debt_id, user_id, "cancelled",
-                                        note or "Cancelled")
+                                        note or "لغو شد")
 
     @staticmethod
     def settle_manually(debt_id, user_id, note=None):
@@ -388,7 +441,7 @@ class DebtService:
                 INSERT INTO debt_status_history (debt_id, old_status, new_status, note)
                 VALUES (%s, %s, 'settled', %s)
                 """,
-                (debt_id, debt["status"], note or "Manually settled"),
+                (debt_id, debt["status"], note or "تسویه دستی"),
             )
             conn.commit()
             debt["status"] = "settled"
@@ -427,7 +480,7 @@ class DebtService:
                 cursor.execute(
                     """
                     INSERT INTO debt_status_history (debt_id, old_status, new_status, note)
-                    VALUES (%s, 'active', 'overdue', 'Auto-detected overdue')
+                    VALUES (%s, 'active', 'overdue', 'سررسیدگذشته (تشخیص خودکار)')
                     """,
                     (debt_id,),
                 )
@@ -543,7 +596,11 @@ class DebtService:
     def get_overdue(user_id, wallet_id=None):
         """List overdue debts."""
         DebtService.sync_statuses(user_id)
-        return DebtService.list_debts(user_id, status="overdue", wallet_id=wallet_id)
+        # list_debts returns a pagination dict; callers expect the item list.
+        result = DebtService.list_debts(
+            user_id, status="overdue", wallet_id=wallet_id, per_page=100
+        )
+        return result["items"]
 
     @staticmethod
     def get_due_soon(user_id, days=7, wallet_id=None):

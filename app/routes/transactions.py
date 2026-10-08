@@ -9,6 +9,7 @@ from app.utils.helpers import (
 )
 from app.models import validate_transaction_payload, validate_transaction_items_payload
 from app.services.transaction_item_service import TransactionItemService
+from services.metadata_service import TagService, LabelService
 from app.utils.currency import get_exchange_rate, convert_amount
 from app.utils.pagination import parse_pagination, paginated_query
 from database import get_connection, release_connection
@@ -27,7 +28,11 @@ def _get_category_type(cursor, category_id, user_id):
 
 def _get_wallet_amount(cursor, wallet_id, user_id):
     cursor.execute(
-        "SELECT amount FROM wallets WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
+        """SELECT COALESCE(SUM(a.amount), 0) AS amount
+           FROM wallets w
+           LEFT JOIN accounts a ON a.wallet_id = w.id AND a.deleted_at IS NULL
+           WHERE w.id = %s AND w.user_id = %s AND w.deleted_at IS NULL
+           GROUP BY w.id""",
         (wallet_id, user_id),
     )
     row = cursor.fetchone()
@@ -461,6 +466,14 @@ def list_transactions():
         in: query
         type: string
         enum: [income, cost, transfer]
+      - name: tag_id
+        in: query
+        type: integer
+        description: Filter transactions by tag
+      - name: label_id
+        in: query
+        type: integer
+        description: Filter transactions by label
       - name: include_transfers
         in: query
         type: string
@@ -483,6 +496,8 @@ def list_transactions():
     max_amount = request.args.get("max_amount", type=float)
     description = request.args.get("description", "").strip()
     category_type = request.args.get("category_type", "").strip().lower()
+    tag_id = request.args.get("tag_id", type=int)
+    label_id = request.args.get("label_id", type=int)
     include_transfers = request.args.get("include_transfers", "").strip().lower() in ("1", "true", "yes")
 
     conn = get_connection()
@@ -538,6 +553,12 @@ def list_transactions():
         if description:
             filter_clause += " AND t.description LIKE %s"
             filter_params.append(f"%{description}%")
+        if tag_id is not None:
+            filter_clause += " AND EXISTS (SELECT 1 FROM transaction_tags tt WHERE tt.transaction_id = t.id AND tt.tag_id = %s)"
+            filter_params.append(tag_id)
+        if label_id is not None:
+            filter_clause += " AND EXISTS (SELECT 1 FROM transaction_labels tl WHERE tl.transaction_id = t.id AND tl.label_id = %s)"
+            filter_params.append(label_id)
 
         join_clause = (
             " FROM transactions t "
@@ -547,11 +568,41 @@ def list_transactions():
         )
         all_params = base_params + filter_params
 
-        def _serialize_tx(row):
+        def _attach_tags_labels(tx_ids):
+            """Batch-attach tags and labels to a list of transaction ids."""
+            if not tx_ids:
+                return {}, {}
+            tags_map, labels_map = {}, {}
+            cursor.execute(
+                "SELECT tt.transaction_id, t.id, t.name, t.color "
+                "FROM transaction_tags tt JOIN tags t ON t.id = tt.tag_id "
+                "WHERE t.deleted_at IS NULL AND tt.transaction_id = ANY(%s)",
+                (tx_ids,),
+            )
+            for r in cursor.fetchall():
+                tags_map.setdefault(r["transaction_id"], []).append(
+                    {"id": r["id"], "name": r["name"], "color": r["color"]}
+                )
+            cursor.execute(
+                "SELECT tl.transaction_id, l.id, l.name, l.color "
+                "FROM transaction_labels tl JOIN labels l ON l.id = tl.label_id "
+                "WHERE l.deleted_at IS NULL AND tl.transaction_id = ANY(%s)",
+                (tx_ids,),
+            )
+            for r in cursor.fetchall():
+                labels_map.setdefault(r["transaction_id"], []).append(
+                    {"id": r["id"], "name": r["name"], "color": r["color"]}
+                )
+            return tags_map, labels_map
+
+        def _serialize_tx(row, tags_map=None, labels_map=None):
             d = row_to_dict(row)
+            tx_id = d.get("id")
             d["record_type"] = "transaction"
             d["is_transfer"] = False
             d["date"] = gregorian_to_jalali(d["date"])
+            d["tags"] = tags_map.get(tx_id, []) if tags_map else []
+            d["labels"] = labels_map.get(tx_id, []) if labels_map else []
             return d
 
         # When including transfers, merge both types and paginate in Python
@@ -569,7 +620,9 @@ def list_transactions():
             # Fetch all transactions (no LIMIT) for merging
             cursor.execute(data_sql, all_params)
             tx_rows = cursor.fetchall()
-            results = [_serialize_tx(r) for r in tx_rows]
+            tx_ids = [r["id"] for r in tx_rows]
+            tags_map, labels_map = _attach_tags_labels(tx_ids)
+            results = [_serialize_tx(r, tags_map, labels_map) for r in tx_rows]
 
             # Fetch matching transfers
             transfer_query = (
@@ -637,7 +690,22 @@ def list_transactions():
                 "u.username as creator_username, u.display_name as creator_display_name"
                 + join_clause + base_where + filter_clause + " ORDER BY t.date DESC"
             )
-            return paginated_query(cursor, count_sql, data_sql, all_params, _serialize_tx, page, per_page)
+            cursor.execute(count_sql, all_params)
+            total = cursor.fetchone()["total"]
+            offset = (page - 1) * per_page
+            cursor.execute(data_sql + " LIMIT %s OFFSET %s", all_params + [per_page, offset])
+            rows = cursor.fetchall()
+            tx_ids = [r["id"] for r in rows]
+            tags_map, labels_map = _attach_tags_labels(tx_ids)
+            items = [_serialize_tx(r, tags_map, labels_map) for r in rows]
+            total_pages = math.ceil(total / per_page) if per_page > 0 else 0
+            return jsonify({
+                "items": items,
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": total_pages,
+            })
     finally:
         cursor.close()
         release_connection(conn)
@@ -912,6 +980,9 @@ def get_transaction(tx_id):
         if items:
             d["items"] = items
             d["item_count"] = len(items)
+        # Include tags and labels
+        d["tags"] = TagService.get_transaction_tags(tx_id)
+        d["labels"] = LabelService.get_transaction_labels(tx_id)
     cursor.close()
     release_connection(conn)
     return jsonify(d)

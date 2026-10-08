@@ -7,6 +7,7 @@ import { useTransactions } from "@/hooks/transactions";
 import { useActiveWalletFilter } from "@/hooks/useActiveWalletFilter";
 import { useCategories } from "@/hooks/categories";
 import { useSources } from "@/hooks/sources";
+import { useTags, useLabels } from "@/hooks/metadata";
 import { useAuth } from "@/context/auth-context";
 import type { Transaction } from "@/types";
 import { formatToman, formatJalali } from "@/lib/format";
@@ -41,6 +42,8 @@ export default function TransactionsPage() {
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState<string>("");
   const [sourceId, setSourceId] = useState<string>("");
+  const [tagId, setTagId] = useState<string>("");
+  const [labelId, setLabelId] = useState<string>("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
@@ -48,6 +51,8 @@ export default function TransactionsPage() {
   const filters: Record<string, string> = {};
   if (categoryId) filters.category_id = categoryId;
   if (sourceId) filters.source_id = sourceId;
+  if (tagId) filters.tag_id = tagId;
+  if (labelId) filters.label_id = labelId;
   if (dateFrom) filters.date_from = dateFrom;
   if (dateTo) filters.date_to = dateTo;
 
@@ -59,6 +64,10 @@ export default function TransactionsPage() {
   );
   const { data: categories } = useCategories();
   const { data: sources } = useSources();
+  const { data: tagsResp } = useTags();
+  const tags = tagsResp?.items;
+  const { data: labelsResp } = useLabels();
+  const labels = labelsResp?.items;
 
   const transactions = response?.items ?? [];
   const totalPages = response?.total_pages ?? 0;
@@ -75,11 +84,13 @@ export default function TransactionsPage() {
     );
   }, [transactions, search]);
 
-  const hasFilters = categoryId || sourceId || dateFrom || dateTo;
+  const hasFilters = categoryId || sourceId || tagId || labelId || dateFrom || dateTo;
 
   function resetFilters() {
     setCategoryId("");
     setSourceId("");
+    setTagId("");
+    setLabelId("");
     setDateFrom("");
     setDateTo("");
     setPage(1);
@@ -140,6 +151,32 @@ export default function TransactionsPage() {
           </SelectContent>
         </Select>
 
+        <Select value={tagId} onValueChange={(v) => { setTagId(v); setPage(1); }}>
+          <SelectTrigger className="w-[150px]">
+            <SelectValue placeholder={t("nav.tags")} />
+          </SelectTrigger>
+          <SelectContent>
+            {tags?.map((tag) => (
+              <SelectItem key={tag.id} value={String(tag.id)}>
+                {tag.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={labelId} onValueChange={(v) => { setLabelId(v); setPage(1); }}>
+          <SelectTrigger className="w-[150px]">
+            <SelectValue placeholder={t("nav.labels")} />
+          </SelectTrigger>
+          <SelectContent>
+            {labels?.map((label) => (
+              <SelectItem key={label.id} value={String(label.id)}>
+                {label.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
         <JalaliDatePicker
           value={dateFrom}
           onChange={(v) => { setDateFrom(v); setPage(1); }}
@@ -185,6 +222,9 @@ export default function TransactionsPage() {
                   </TableHead>
                   <TableHead className="w-[120px]">
                     {t("transactions.source")}
+                  </TableHead>
+                  <TableHead className="w-[180px]">
+                    {t("nav.tags")} / {t("nav.labels")}
                   </TableHead>
                   <TableHead className="w-[130px] text-end">
                     {t("common.amount")}
@@ -237,6 +277,28 @@ export default function TransactionsPage() {
                             {tx.creator_display_name || tx.creator_username}
                           </p>
                         )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {tx.tags?.map((tag) => (
+                          <span
+                            key={`tag-${tag.id}`}
+                            className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
+                            style={tag.color ? { backgroundColor: tag.color, color: "#fff" } : undefined}
+                          >
+                            {tag.name}
+                          </span>
+                        ))}
+                        {tx.labels?.map((label) => (
+                          <span
+                            key={`label-${label.id}`}
+                            className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                            style={label.color ? { backgroundColor: label.color, color: "#fff" } : undefined}
+                          >
+                            {label.name}
+                          </span>
+                        ))}
+                      </div>
                     </TableCell>
                     <TableCell className="text-end font-semibold">
                       <span

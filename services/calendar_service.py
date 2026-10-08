@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 from typing import Iterable, Optional
 
 from database import get_connection, release_connection
+from services.balance_utils import get_wallet_balance, to_decimal
 
 
 ALLOWED_FREQUENCIES = ("once", "daily", "weekly", "monthly", "yearly")
@@ -101,8 +102,22 @@ class CalendarService:
     @staticmethod
     def get_balance_wallets(conn: psycopg2.extensions.connection) -> list[tuple]:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, amount FROM wallets WHERE deleted_at IS NULL")
-        return [(row["id"], row["name"], row["amount"] or 0.0) for row in cursor.fetchall()]
+        cursor.execute(
+            """
+            SELECT w.id, w.name,
+                COALESCE((SELECT SUM(a.amount) FROM accounts a
+                          WHERE a.wallet_id = w.id AND a.deleted_at IS NULL), 0)
+                + COALESCE((SELECT SUM(CASE WHEN c.type = 'income' THEN t.amount ELSE -t.amount END)
+                            FROM transactions t
+                            LEFT JOIN categories c ON c.id = t.category_id
+                            WHERE t.wallet_id = w.id AND t.user_id = w.user_id
+                              AND t.deleted_at IS NULL), 0)
+                AS balance
+            FROM wallets w
+            WHERE w.deleted_at IS NULL
+            """
+        )
+        return [(row["id"], row["name"], float(row["balance"] or 0.0)) for row in cursor.fetchall()]
 
     @staticmethod
     def get_active_category(cursor, category_id: int, user_id: int):
@@ -115,7 +130,7 @@ class CalendarService:
     @staticmethod
     def get_active_wallet(cursor, wallet_id: int, user_id: int):
         cursor.execute(
-            "SELECT id, amount, name FROM wallets WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
+            "SELECT id, name FROM wallets WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
             (wallet_id, user_id),
         )
         return cursor.fetchone()
@@ -791,14 +806,8 @@ class CalendarService:
                 raise ValueError("فقط نمونه‌های در انتظار یا با تأخیر قابل تأیید هستند")
 
             if row["category_type"] == "cost" and row["wallet_id"] is not None:
-                cursor.execute(
-                    "SELECT amount FROM wallets WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
-                    (row["wallet_id"], user_id),
-                )
-                wallet = cursor.fetchone()
-                if wallet is None:
-                    raise ValueError("کیف پول یافت نشد")
-                if float(wallet["amount"] or 0) < float(row["amount"]):
+                balance = get_wallet_balance(cursor, row["wallet_id"], user_id)
+                if balance < to_decimal(row["amount"]):
                     raise ValueError("موجودی کیف پول کافی نیست")
 
             cursor.execute(

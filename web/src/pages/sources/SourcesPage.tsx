@@ -10,7 +10,7 @@ import {
   useUpdateSource,
   useDeleteSource,
 } from "@/hooks/sources";
-import { sourceSchema, type SourceFormData } from "@/schemas/source";
+import { sourceSchema, type SourceFormData, type SourceFormInput } from "@/schemas/source";
 import type { Source } from "@/types";
 import { formatToman } from "@/lib/format";
 import { BANK_TYPES, getBankById } from "@/lib/bankConfig";
@@ -146,7 +146,7 @@ export default function SourcesPage() {
   const [editingSource, setEditingSource] = useState<Source | null>(null);
   const [deletingSource, setDeletingSource] = useState<Source | null>(null);
 
-  const form = useForm<SourceFormData>({
+  const form = useForm<SourceFormInput, unknown, SourceFormData>({
     resolver: zodResolver(sourceSchema),
     defaultValues: { name: "", amount: 0, bank_type: "cash" },
   });

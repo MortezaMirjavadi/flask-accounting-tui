@@ -537,17 +537,17 @@ class SidebarAppScreen(Screen):
                     yield SearchTree(self.menu_root, id="menu-tree")
                 
                 with Horizontal(id="quick-actions"):
-                    yield Button("Expand All", id="btn-expand", variant="primary")
-                    yield Button("Collapse", id="btn-collapse", variant="default")
+                    yield Button("⬇ Expand All", id="btn-expand", variant="primary")
+                    yield Button("⬆ Collapse", id="btn-collapse", variant="default")
 
             # Content Area
             with Vertical(id="content-area"):
                 with Horizontal(id="content-header"):
                     yield Breadcrumb(id="breadcrumb")
                     with Horizontal(id="content-actions"):
-                        yield Button("Open", id="btn-open", variant="primary")
+                        yield Button("📂 Open", id="btn-open", variant="primary")
                         yield Button("🔄 Refresh", id="btn-refresh")
-                        yield Button("Toggle", id="btn-toggle-sidebar", variant="default")
+                        yield Button("↔ Toggle", id="btn-toggle-sidebar", variant="default")
 
                 with Container(id="content-body"):
                     yield ContentRenderer(id="content-renderer")

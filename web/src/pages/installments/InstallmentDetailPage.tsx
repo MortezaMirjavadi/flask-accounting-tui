@@ -56,7 +56,12 @@ export default function InstallmentDetailPage() {
         toast.success(t("common.success"));
         setGenerateOpen(false);
       },
-      onError: () => toast.error(t("common.error")),
+      onError: (err) =>
+            toast.error(
+              err instanceof Error && err.message
+                ? err.message
+                : t("common.error"),
+            ),
     });
   };
 
@@ -67,7 +72,12 @@ export default function InstallmentDetailPage() {
         setCancelOpen(false);
         navigate("/installments");
       },
-      onError: () => toast.error(t("common.error")),
+      onError: (err) =>
+            toast.error(
+              err instanceof Error && err.message
+                ? err.message
+                : t("common.error"),
+            ),
     });
   };
 
@@ -82,7 +92,12 @@ export default function InstallmentDetailPage() {
           setSelectedInstallments([]);
           setPaidDate("");
         },
-        onError: () => toast.error(t("common.error")),
+        onError: (err) =>
+            toast.error(
+              err instanceof Error && err.message
+                ? err.message
+                : t("common.error"),
+            ),
       },
     );
   };
@@ -98,7 +113,12 @@ export default function InstallmentDetailPage() {
           setChangeDueDateId(null);
           setNewDueDate("");
         },
-        onError: () => toast.error(t("common.error")),
+        onError: (err) =>
+            toast.error(
+              err instanceof Error && err.message
+                ? err.message
+                : t("common.error"),
+            ),
       },
     );
   };

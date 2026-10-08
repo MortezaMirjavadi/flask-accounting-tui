@@ -12,7 +12,7 @@ import {
 } from "@/hooks/budget";
 import { useCategories } from "@/hooks/categories";
 import type { BudgetItem } from "@/types";
-import { budgetItemSchema, type BudgetItemFormData } from "@/schemas/budget";
+import { budgetItemSchema, type BudgetItemFormData, type BudgetItemFormInput } from "@/schemas/budget";
 import { PERSIAN_MONTHS } from "@/lib/constants";
 import { formatToman } from "@/lib/format";
 import { useForm } from "react-hook-form";
@@ -59,7 +59,7 @@ export default function BudgetItemsPage() {
   const [editingItem, setEditingItem] = useState<BudgetItem | null>(null);
   const [deletingItem, setDeletingItem] = useState<BudgetItem | null>(null);
 
-  const form = useForm<BudgetItemFormData>({
+  const form = useForm<BudgetItemFormInput, unknown, BudgetItemFormData>({
     resolver: zodResolver(budgetItemSchema),
     defaultValues: { category_id: 0, planned_amount: 0, notes: "" },
   });

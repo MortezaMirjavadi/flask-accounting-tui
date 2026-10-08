@@ -67,11 +67,31 @@ export default function ChecksPage() {
         setConfirmOpen(false);
         setSelectedCheckId(null);
       },
-      onError: () => toast.error(t("common.error")),
+      onError: (err) =>
+            toast.error(
+              err instanceof Error && err.message
+                ? err.message
+                : t("common.error"),
+            ),
     });
   };
 
   const isPending = clearCheck.isPending || bounceCheck.isPending || cancelCheck.isPending;
+
+  const confirmMessages = {
+    clear: {
+      title: t("checks.clearTitle"),
+      description: t("checks.clearConfirm"),
+    },
+    bounce: {
+      title: t("checks.bounceTitle"),
+      description: t("checks.bounceConfirm"),
+    },
+    cancel: {
+      title: t("checks.cancelTitle"),
+      description: t("checks.cancelConfirm"),
+    },
+  }[confirmAction];
 
   return (
     <motion.div
@@ -220,8 +240,8 @@ export default function ChecksPage() {
       <ConfirmDialog
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
-        title={t("common.areYouSure")}
-        description={t("common.deleteConfirm")}
+        title={confirmMessages.title}
+        description={confirmMessages.description}
         onConfirm={executeAction}
         loading={isPending}
         variant={confirmAction === "cancel" ? "destructive" : "default"}

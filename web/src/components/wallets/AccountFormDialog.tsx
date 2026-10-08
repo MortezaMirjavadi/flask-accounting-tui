@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
 import { useCreateAccount, useUpdateAccount } from "@/hooks/accounts";
-import { accountSchema, type AccountFormData } from "@/schemas/wallet";
+import { accountSchema, type AccountFormData, type AccountFormInput } from "@/schemas/wallet";
 import type { Account } from "@/types";
 import { BANK_TYPES } from "@/lib/bankConfig";
 import { ResponsiveDialog } from "@/components/shared/ResponsiveDialog";
@@ -56,7 +56,7 @@ export function AccountFormDialog({
   const createMutation = useCreateAccount(walletId);
   const updateMutation = useUpdateAccount(walletId);
 
-  const form = useForm<AccountFormData>({
+  const form = useForm<AccountFormInput, unknown, AccountFormData>({
     resolver: zodResolver(accountSchema),
     defaultValues: {
       name: "",

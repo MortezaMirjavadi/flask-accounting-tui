@@ -7,13 +7,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 from app.utils.helpers import jalali_to_gregorian
-
-
-def to_decimal(value: Any) -> Decimal:
-    try:
-        return Decimal(str(value))
-    except (TypeError, ValueError):
-        raise ValueError("مبلغ نامعتبر است")
+from services.balance_utils import get_wallet_balance, to_decimal  # noqa: F401 (re-export)
 
 
 def to_float(value: Decimal | int | float | str) -> float:
@@ -135,20 +129,23 @@ def ensure_wallet_exists(cursor, wallet_id: int | None, user_id: int) -> None:
         raise ValueError("کیف پول یافت نشد")
 
 
-def get_wallet_balance(cursor, wallet_id: int, user_id: int) -> Decimal:
-    cursor.execute(
-        "SELECT amount FROM wallets WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
-        (wallet_id, user_id),
-    )
-    row = cursor.fetchone()
-    if row is None:
-        raise ValueError("کیف پول یافت نشد")
-    return to_decimal(row["amount"])
-
-
 def apply_wallet_adjustment(cursor, wallet_id: int | None, user_id: int, amount: Decimal, category_type: str) -> None:
     """Legacy: no-op. Wallet balances are derived from account sums."""
     pass
+
+
+PERSIAN_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+
+def to_persian_digits(value: Any) -> str:
+    return str(value).translate(PERSIAN_DIGITS)
+
+
+def check_cleared_description(check_number: str, locale: str = "en") -> str:
+    """Localized transaction description for a cleared check."""
+    if locale == "fa":
+        return f"وصول چک شماره {to_persian_digits(check_number)}"
+    return f"Check #{check_number} cleared"
 
 
 def create_settlement_transaction(

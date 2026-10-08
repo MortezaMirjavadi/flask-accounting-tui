@@ -3,9 +3,10 @@ import { motion } from "framer-motion";
 import { GitBranch } from "lucide-react";
 import { useBudgetPeriodsWithItems } from "@/hooks/budget";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { GaugeChart } from "@/components/shared/GaugeChart";
-import { formatToman } from "@/lib/format";
+import { formatToman, toPersianDigits } from "@/lib/format";
 import { getJalaliMonthName } from "@/lib/jalali";
 import type { BudgetItem, BudgetPeriodWithItems } from "@/types";
 
@@ -40,26 +41,41 @@ export default function BudgetTreePage() {
       ) : (
         <div className="space-y-6">
           {list.map((period: BudgetPeriodWithItems) => {
-            const totalPlanned = period.items?.reduce((s: number, i: BudgetItem) => s + (i.planned_amount || 0), 0) ?? 0;
-            const totalActual = period.items?.reduce((s: number, i: BudgetItem) => s + (i.actual_amount || 0), 0) ?? 0;
-            const overallUtil = totalPlanned > 0 ? (totalActual / totalPlanned) * 100 : 0;
+            const totalPlanned =
+              period.items?.reduce(
+                (s: number, i: BudgetItem) => s + (Number(i.planned_amount) || 0),
+                0,
+              ) ?? 0;
+            const totalActual =
+              period.items?.reduce(
+                (s: number, i: BudgetItem) => s + (i.actual_amount || 0),
+                0,
+              ) ?? 0;
+            const overallUtil =
+              totalPlanned > 0 ? (totalActual / totalPlanned) * 100 : 0;
             const monthName = getJalaliMonthName(period.month);
             return (
               <Card key={period.id}>
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-lg">
-                      {monthName} {period.year}
+                      {monthName} {toPersianDigits(String(period.year))}
                     </CardTitle>
                     <div className="flex items-center gap-3 text-sm">
-                      <span className="text-muted-foreground">{t("budget.plannedAmount")}:</span>
-                      <span className="font-semibold">{formatToman(totalPlanned)}</span>
+                      <span className="text-muted-foreground">
+                        {t("budget.plannedAmount")}:
+                      </span>
+                      <span className="font-semibold">
+                        {formatToman(totalPlanned)}
+                      </span>
                     </div>
                   </div>
                 </CardHeader>
                 <CardContent>
                   {!period.items || period.items.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">{t("common.noData")}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {t("common.noData")}
+                    </p>
                   ) : (
                     <>
                       {/* Overall period gauge */}
@@ -76,18 +92,29 @@ export default function BudgetTreePage() {
                       {/* Per-category gauges */}
                       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
                         {period.items.map((item: BudgetItem) => {
-                          const planned = item.planned_amount || 0;
+                          const planned = Number(item.planned_amount) || 0;
                           const actual = item.actual_amount || 0;
-                          const utilization = planned > 0 ? (actual / planned) * 100 : 0;
+                          const utilization =
+                            planned > 0 ? (actual / planned) * 100 : 0;
                           return (
-                            <div key={item.id} className="flex flex-col items-center rounded-lg border p-3">
+                            <div
+                              key={item.id}
+                              className="flex flex-col items-center rounded-lg border p-3"
+                            >
                               <GaugeChart
                                 value={utilization}
                                 size={90}
                                 strokeWidth={8}
                               />
-                              <p className="mt-1 w-full truncate text-center text-xs font-medium">
-                                {item.category_name}
+                              <p className="mt-1 flex w-full items-center justify-center gap-1 truncate text-center text-xs font-medium">
+                                <span className="truncate">
+                                  {item.category_name}
+                                </span>
+                                {utilization > 100 && (
+                                  <Badge variant="destructive">
+                                    {t("budget.overBudget")}
+                                  </Badge>
+                                )}
                               </p>
                               <p className="text-[10px] text-muted-foreground">
                                 {formatToman(actual)} / {formatToman(planned)}

@@ -3,13 +3,15 @@ import { useTranslation } from "react-i18next";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion } from "framer-motion";
-import { useCreateInstallmentPlan } from "@/hooks";
-import { installmentPlanSchema, type InstallmentPlanFormData } from "@/schemas/installment";
+import { useWalletContext } from "@/context/wallet-context";
+import { useCreateInstallmentPlan, useCategoryTree } from "@/hooks";
+import { installmentPlanSchema, type InstallmentPlanFormData, type InstallmentPlanFormInput } from "@/schemas/installment";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AmountInput } from "@/components/shared/AmountInput";
+import { CategoryTreeSelect } from "@/components/shared/CategoryTreeSelect";
 import { JalaliDatePicker } from "@/components/shared/JalaliDatePicker";
 import { formatNumber, toSafeNumber } from "@/lib/format";
 import {
@@ -28,9 +30,11 @@ export default function InstallmentPlanFormPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const createPlan = useCreateInstallmentPlan();
+  const { data: categoriesTree } = useCategoryTree();
+  const { activeWallet } = useWalletContext();
   const isMobile = useIsMobile();
 
-  const form = useForm<InstallmentPlanFormData>({
+  const form = useForm<InstallmentPlanFormInput, unknown, InstallmentPlanFormData>({
     resolver: zodResolver(installmentPlanSchema),
     defaultValues: {
       title: "",
@@ -46,13 +50,19 @@ export default function InstallmentPlanFormPage() {
   const installmentCount = form.watch("installment_count");
 
   const onSubmit = (data: InstallmentPlanFormData) => {
-    createPlan.mutate(data, {
+    // Bind the plan to the active wallet so it appears in the wallet-scoped
+    // plans list (the TUI requires a wallet at creation too).
+    createPlan.mutate({ ...data, wallet_id: activeWallet?.id }, {
       onSuccess: () => {
         toast.success(t("common.success"));
         navigate("/installments");
       },
-      onError: () => {
-        toast.error(t("common.error"));
+      onError: (err) => {
+        toast.error(
+          err instanceof Error && err.message
+            ? err.message
+            : t("common.error"),
+        );
       },
     });
   };
@@ -115,7 +125,13 @@ export default function InstallmentPlanFormPage() {
               </FormControl>
               {totalAmount > 0 && installmentCount > 0 && (
                 <p className="text-sm text-muted-foreground">
-                  Suggested: {formatNumber(Math.ceil(toSafeNumber(totalAmount) / Math.max(toSafeNumber(installmentCount), 1)))}
+                  {t("installments.suggestedAmount", {
+                    amount: formatNumber(
+                      Math.ceil(
+                        toSafeNumber(totalAmount) / Math.max(toSafeNumber(installmentCount), 1)
+                      )
+                    ),
+                  })}
                 </p>
               )}
               <FormMessage />
@@ -152,6 +168,25 @@ export default function InstallmentPlanFormPage() {
             )}
           />
         </div>
+
+        <FormField
+          control={form.control}
+          name="category_id"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t("transactions.category")}</FormLabel>
+              <FormControl>
+                <CategoryTreeSelect
+                  categories={categoriesTree ?? []}
+                  value={field.value || undefined}
+                  onChange={field.onChange}
+                  placeholder={t("common.select")}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
 
         <div className="flex justify-end gap-2">
           <Button

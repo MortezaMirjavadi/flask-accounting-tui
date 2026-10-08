@@ -1,4 +1,5 @@
 import psycopg2
+import jdatetime
 from database import get_connection, release_connection
 
 
@@ -62,16 +63,17 @@ class BudgetService:
             cursor.execute(query, params)
             periods = cursor.fetchall()
             
-            # Get all items in one query
+            # Get all items in one query (include category_id for actual lookup)
             period_ids = [p["id"] for p in periods]
             items_by_period = {}
-            
+
             if period_ids:
                 placeholders = ",".join(["%s"] * len(period_ids))
                 cursor.execute(f"""
-                    SELECT 
+                    SELECT
                         bi.id,
                         bi.budget_period_id,
+                        bi.category_id,
                         bi.planned_amount,
                         bi.notes,
                         c.name as category_name
@@ -80,21 +82,61 @@ class BudgetService:
                     WHERE bi.budget_period_id IN ({placeholders}) AND bi.deleted_at IS NULL
                     ORDER BY bi.budget_period_id, c.name
                 """, period_ids)
-                
+
                 for item in cursor.fetchall():
                     pid = item["budget_period_id"]
                     items_by_period.setdefault(pid, []).append(dict(item))
-            
+
+            # Compute actual spending from transactions for each (year, month) pair
+            # by converting Jalali year/month → Gregorian date range
+            unique_ym = {(p["year"], p["month"]) for p in periods}
+            # actual_map[(jalali_year, jalali_month, category_id)] = actual_amount
+            actual_map = {}
+
+            for y, m in unique_ym:
+                start_jdate = jdatetime.date(y, m, 1)
+                if m == 12:
+                    end_jdate = jdatetime.date(y + 1, 1, 1) - jdatetime.timedelta(days=1)
+                else:
+                    end_jdate = jdatetime.date(y, m + 1, 1) - jdatetime.timedelta(days=1)
+                start_greg = start_jdate.togregorian()
+                end_greg = end_jdate.togregorian()
+
+                cursor.execute(
+                    """
+                    SELECT t.category_id, COALESCE(SUM(t.amount), 0) as actual_amount
+                    FROM transactions t
+                    WHERE t.user_id = %s AND t.date >= %s AND t.date <= %s
+                    GROUP BY t.category_id
+                    """,
+                    (user_id, start_greg, end_greg),
+                )
+                for row in cursor.fetchall():
+                    actual_map[(y, m, row["category_id"])] = float(row["actual_amount"])
+
+            # Attach actual_amount to each item and compute period totals
             result = []
             for period in periods:
+                pid = period["id"]
+                py, pm = period["year"], period["month"]
+                items = items_by_period.get(pid, [])
+                total_actual = 0.0
+
+                for item in items:
+                    cat_id = item.get("category_id")
+                    actual = actual_map.get((py, pm, cat_id), 0.0)
+                    item["actual_amount"] = actual
+                    total_actual += actual
+
                 result.append({
-                    "id": period["id"],
-                    "year": period["year"],
-                    "month": period["month"],
+                    "id": pid,
+                    "year": py,
+                    "month": pm,
                     "created_at": period["created_at"],
                     "item_count": period["item_count"],
                     "total_planned": float(period["total_planned"]) if period["total_planned"] else 0,
-                    "items": items_by_period.get(period["id"], [])
+                    "total_actual": total_actual,
+                    "items": items,
                 })
             
             return result

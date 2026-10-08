@@ -15,6 +15,7 @@ import {
   type BudgetPeriodFormData,
 } from "@/schemas/budget";
 import { PERSIAN_MONTHS } from "@/lib/constants";
+import { toPersianDigits } from "@/lib/format";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,10 +35,14 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { toast } from "sonner";
 
-// Jalali years range
 const currentJalaliYear = new Date().toLocaleDateString("fa-IR-u-nu-latn", {
   calendar: "persian",
   year: "numeric",
@@ -61,6 +66,17 @@ export default function BudgetPeriodFormPage() {
   const createMutation = useCreateBudgetPeriod();
   const updateMutation = useUpdateBudgetPeriod();
 
+  const periodYear = period ? Number(period.year) : undefined;
+
+  const availableYears = Array.from(
+    new Set([
+      ...yearOptions,
+      ...(isEdit && periodYear != null && Number.isFinite(periodYear)
+        ? [periodYear]
+        : []),
+    ]),
+  ).sort((a, b) => a - b);
+
   const form = useForm<BudgetPeriodFormData>({
     resolver: zodResolver(budgetPeriodSchema),
     defaultValues: {
@@ -70,10 +86,13 @@ export default function BudgetPeriodFormPage() {
   });
 
   useEffect(() => {
-    if (isEdit && period) {
-      form.reset({ year: period.year, month: period.month });
-    }
-  }, [isEdit, period, form]);
+    if (!isEdit || !period) return;
+
+    form.reset({
+      year: Number(period.year),
+      month: Number(period.month),
+    });
+  }, [isEdit, period, form.reset]);
 
   async function onSubmit(data: BudgetPeriodFormData) {
     try {
@@ -115,23 +134,30 @@ export default function BudgetPeriodFormPage() {
           render={({ field }) => (
             <FormItem>
               <FormLabel>{t("budget.year")}</FormLabel>
+
               <Select
-                onValueChange={(val) => field.onChange(Number(val))}
-                value={String(field.value)}
+                name={field.name}
+                value={field.value != null ? String(field.value) : ""}
+                onValueChange={(value) => {
+                  if (value === "") return;
+                  field.onChange(Number(value));
+                }}
               >
                 <FormControl>
-                  <SelectTrigger>
-                    <SelectValue />
+                  <SelectTrigger ref={field.ref} onBlur={field.onBlur}>
+                    <SelectValue placeholder={t("budget.year")} />
                   </SelectTrigger>
                 </FormControl>
+
                 <SelectContent>
-                  {yearOptions.map((y) => (
-                    <SelectItem key={y} value={String(y)}>
-                      {y}
+                  {availableYears.map((year) => (
+                    <SelectItem key={year} value={String(year)}>
+                      {toPersianDigits(String(year))}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+
               <FormMessage />
             </FormItem>
           )}
@@ -143,40 +169,41 @@ export default function BudgetPeriodFormPage() {
           render={({ field }) => (
             <FormItem>
               <FormLabel>{t("budget.month")}</FormLabel>
+
               <Select
-                onValueChange={(val) => field.onChange(Number(val))}
-                value={String(field.value)}
+                name={field.name}
+                value={field.value != null ? String(field.value) : ""}
+                onValueChange={(value) => {
+                  if (value === "") return;
+                  field.onChange(Number(value));
+                }}
               >
                 <FormControl>
-                  <SelectTrigger>
-                    <SelectValue />
+                  <SelectTrigger ref={field.ref} onBlur={field.onBlur}>
+                    <SelectValue placeholder={t("budget.month")} />
                   </SelectTrigger>
                 </FormControl>
+
                 <SelectContent>
-                  {PERSIAN_MONTHS.map((m, i) => (
-                    <SelectItem key={i + 1} value={String(i + 1)}>
-                      {m}
+                  {PERSIAN_MONTHS.map((month, index) => (
+                    <SelectItem key={index + 1} value={String(index + 1)}>
+                      {month}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+
               <FormMessage />
             </FormItem>
           )}
         />
 
         <div className="flex items-center justify-end gap-3 pt-4">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => navigate(-1)}
-          >
+          <Button type="button" variant="outline" onClick={() => navigate(-1)}>
             {t("common.cancel")}
           </Button>
           <Button type="submit" disabled={isPending}>
-            {isPending && (
-              <Loader2 className="me-2 h-4 w-4 animate-spin" />
-            )}
+            {isPending && <Loader2 className="me-2 h-4 w-4 animate-spin" />}
             {t("common.save")}
           </Button>
         </div>
@@ -186,8 +213,15 @@ export default function BudgetPeriodFormPage() {
 
   if (isMobile) {
     return (
-      <Sheet open={true} onOpenChange={(open) => !open && navigate(-1)} direction="bottom">
-        <SheetContent side="bottom" className="max-h-[90vh] overflow-y-auto px-4 pb-8">
+      <Sheet
+        open={true}
+        onOpenChange={(open) => !open && navigate(-1)}
+        direction="bottom"
+      >
+        <SheetContent
+          side="bottom"
+          className="max-h-[90vh] overflow-y-auto px-4 pb-8"
+        >
           <SheetHeader className="text-start">
             <SheetTitle>
               {isEdit ? t("budget.editPeriod") : t("budget.addPeriod")}
@@ -216,9 +250,7 @@ export default function BudgetPeriodFormPage() {
             {isEdit ? t("budget.editPeriod") : t("budget.addPeriod")}
           </CardTitle>
         </CardHeader>
-        <CardContent>
-          {formContent}
-        </CardContent>
+        <CardContent>{formContent}</CardContent>
       </Card>
     </motion.div>
   );

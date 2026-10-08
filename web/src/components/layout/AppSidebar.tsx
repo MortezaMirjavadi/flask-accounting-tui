@@ -21,7 +21,6 @@ import {
   X,
   UserCog,
   Layers,
-  GitBranch,
   CreditCard,
 } from "lucide-react";
 import {
@@ -35,7 +34,6 @@ import {
   SidebarMenuItem,
   SidebarHeader,
   SidebarFooter,
-  SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
 import {
@@ -45,15 +43,17 @@ import {
 } from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/context/auth-context";
+import type { TranslationKey } from "@/types/i18next";
 
 interface NavItem {
-  titleKey: string;
+  titleKey: TranslationKey;
   url: string;
   icon: React.ComponentType<{ className?: string }>;
-  items?: { titleKey: string; url: string }[];
+  items?: { titleKey: TranslationKey; url: string }[];
+  matchPrefixes?: string[];
 }
 
-const navGroups: { labelKey: string; items: NavItem[] }[] = [
+const navGroups: { labelKey: TranslationKey; items: NavItem[] }[] = [
   {
     labelKey: "nav.dashboard",
     items: [
@@ -71,7 +71,12 @@ const navGroups: { labelKey: string; items: NavItem[] }[] = [
       { titleKey: "nav.transfers", url: "/transfers", icon: ArrowRightLeft },
       { titleKey: "nav.categories", url: "/categories", icon: Tags },
       { titleKey: "nav.wallets", url: "/wallets", icon: Wallet },
-      { titleKey: "nav.sources", url: "/wallets/sources", icon: CreditCard },
+      {
+        titleKey: "nav.sources",
+        url: "/wallets/sources",
+        icon: CreditCard,
+        matchPrefixes: ["/sources"],
+      },
       { titleKey: "nav.byCategory", url: "/transactions/by-category", icon: Layers },
     ],
   },
@@ -125,6 +130,18 @@ const navGroups: { labelKey: string; items: NavItem[] }[] = [
   },
 ];
 
+// Every selectable menu entry as a group of URL patterns that point to it.
+const menuEntries: string[][] = [
+  ...navGroups.flatMap((group) =>
+    group.items.flatMap((item) => [
+      [item.url, ...(item.matchPrefixes ?? [])],
+      ...(item.items ?? []).map((subItem) => [subItem.url]),
+    ])
+  ),
+  ["/settings"],
+  ["/users"],
+];
+
 export function AppSidebar() {
   const { t } = useTranslation();
   const location = useLocation();
@@ -133,8 +150,24 @@ export function AppSidebar() {
   const direction = useDirection();
   const { isMobile, setOpenMobile } = useSidebar();
 
-  const isActive = (url: string) =>
+  const isUnder = (url: string) =>
     location.pathname === url || location.pathname.startsWith(url + "/");
+
+  const matchLength = (patterns: string[]) =>
+    patterns.reduce(
+      (best, p) => (isUnder(p) ? Math.max(best, p.length) : best),
+      -1
+    );
+
+  // Only the most specific matching entry is highlighted, so exactly one
+  // menu item is active at a time (e.g. on /transactions/by-category only
+  // "By Category" wins, not "Transactions" as well).
+  const bestMatchLength = Math.max(...menuEntries.map((e) => matchLength(e)));
+
+  const isActive = (patterns: string[]) => {
+    const own = matchLength(patterns);
+    return own >= 0 && own === bestMatchLength;
+  };
   const navigateAndClose = (url: string) => {
     navigate(url);
     if (isMobile) setOpenMobile(false);
@@ -167,14 +200,21 @@ export function AppSidebar() {
             <SidebarGroupContent>
               <SidebarMenu>
                 {group.items.map((item) => (
-                  <Collapsible key={item.url} className="group/collapsible" defaultOpen={isActive(item.url)}>
+                  <Collapsible
+                    key={item.url}
+                    className="group/collapsible"
+                    defaultOpen={isUnder(item.url)}
+                  >
                     <SidebarMenuItem>
                       <CollapsibleTrigger asChild>
                         <SidebarMenuButton
                           onClick={() =>
                             !item.items && navigateAndClose(item.url)
                           }
-                          isActive={isActive(item.url)}
+                          isActive={isActive([
+                            item.url,
+                            ...(item.matchPrefixes ?? []),
+                          ])}
                           tooltip={t(item.titleKey)}
                         >
                           <item.icon className="h-4 w-4" />
@@ -191,7 +231,7 @@ export function AppSidebar() {
                               <SidebarMenuItem key={subItem.url}>
                                 <SidebarMenuButton
                                   onClick={() => navigateAndClose(subItem.url)}
-                                  isActive={location.pathname === subItem.url}
+                                  isActive={isActive([subItem.url])}
                                   size="sm"
                                 >
                                   <span>{t(subItem.titleKey)}</span>
@@ -216,7 +256,7 @@ export function AppSidebar() {
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     onClick={() => navigateAndClose("/users")}
-                    isActive={location.pathname.startsWith("/users")}
+                    isActive={isActive(["/users"])}
                     tooltip={t("nav.userManagement")}
                   >
                     <UserCog className="h-4 w-4" />
@@ -233,7 +273,7 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton
               onClick={() => navigateAndClose("/settings")}
-              isActive={location.pathname === "/settings"}
+              isActive={isActive(["/settings"])}
               tooltip={t("nav.settings")}
             >
               <Settings className="h-4 w-4" />

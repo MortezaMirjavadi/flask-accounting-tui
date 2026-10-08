@@ -30,8 +30,8 @@ class LoginScreen(Screen):
             yield Input(placeholder="Password", password=True, id="login_pass")
             yield Static("")
             with Horizontal(classes="button_row"):
-                yield Button("Login", variant="primary", id="login_btn")
-                yield Button("Register", variant="default", id="register_btn")
+                yield Button("🔑 Login", variant="primary", id="login_btn")
+                yield Button("📝 Register", variant="default", id="register_btn")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Login  [Esc] Exit", id="help")
             yield StatusBar("Enter=Login  Esc=Quit", id="status")
@@ -96,8 +96,8 @@ class RegisterScreen(Screen):
                 yield Input(placeholder="your@email.com", id="reg_email")
             yield Static("")
             with Horizontal(classes="button_row"):
-                yield Button("Submit", variant="primary", id="submit_btn")
-                yield Button("Cancel", variant="default", id="cancel_btn")
+                yield Button("✅ Submit", variant="primary", id="submit_btn")
+                yield Button("✖ Cancel", variant="default", id="cancel_btn")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Submit  [Esc] Cancel", id="help")
             yield StatusBar("Fill all fields  Enter=Submit  Esc=Back", id="status")
@@ -178,8 +178,8 @@ class TwoFAVerifyScreen(Screen):
             yield Input(placeholder="123456", id="otp_code", max_length=6, type="integer")
             yield Static("")
             with Horizontal(classes="button_row"):
-                yield Button("Verify", variant="primary", id="verify_btn")
-                yield Button("Cancel", variant="default", id="cancel_btn")
+                yield Button("✓ Verify", variant="primary", id="verify_btn")
+                yield Button("✖ Cancel", variant="default", id="cancel_btn")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Verify  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Verify  Esc=Cancel", id="status")
@@ -245,8 +245,8 @@ class TwoFASetupScreen(Screen):
                 yield Input(placeholder="123456", id="verify_code", max_length=6, type="integer")
             yield Static("")
             with Horizontal(classes="button_row"):
-                yield Button("Enable 2FA", variant="primary", id="enable_btn")
-                yield Button("Cancel", variant="default", id="cancel_btn")
+                yield Button("🔐 Enable 2FA", variant="primary", id="enable_btn")
+                yield Button("✖ Cancel", variant="default", id="cancel_btn")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Enable  [Esc] Cancel", id="help")
             yield StatusBar("Scan QR → Enter code → Enable", id="status")

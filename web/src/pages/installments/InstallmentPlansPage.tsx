@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
 import { useInstallmentPlans } from "@/hooks";
 import { useWalletContext } from "@/context/wallet-context";
-import { formatToman, formatJalali } from "@/lib/format";
+import { formatToman, formatJalali, toPersianDigits } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -81,7 +81,9 @@ export default function InstallmentPlansPage() {
                   <TableHead>{t("installments.installmentAmount")}</TableHead>
                   <TableHead>{t("installments.startDate")}</TableHead>
                   <TableHead>{t("common.status")}</TableHead>
-                  <TableHead className="text-end">{t("common.actions")}</TableHead>
+                  <TableHead className="text-end">
+                    {t("common.actions")}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -89,8 +91,12 @@ export default function InstallmentPlansPage() {
                   <TableRow key={plan.id}>
                     <TableCell className="font-medium">{plan.title}</TableCell>
                     <TableCell>{formatToman(plan.total_amount)}</TableCell>
-                    <TableCell>{plan.installment_count}</TableCell>
-                    <TableCell>{formatToman(plan.installment_amount)}</TableCell>
+                    <TableCell>
+                      {toPersianDigits(String(plan.installment_count))}
+                    </TableCell>
+                    <TableCell>
+                      {formatToman(plan.installment_amount)}
+                    </TableCell>
                     <TableCell>{formatJalali(plan.start_date)}</TableCell>
                     <TableCell>
                       <StatusBadge status={plan.status} />

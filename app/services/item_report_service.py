@@ -10,11 +10,11 @@ from database import get_connection, release_connection
 # SQL fragment for checking transaction access via wallet ownership or membership.
 # Each query that uses this needs 3 user_id params: (user_id, user_id, user_id).
 _TX_ACCESS_WHERE = (
-    "(t.wallet_id IS NULL AND t.user_id = %s) "
+    "((t.wallet_id IS NULL AND t.user_id = %s) "
     "OR t.wallet_id IN ("
     "SELECT id FROM wallets WHERE user_id = %s AND deleted_at IS NULL "
     "UNION "
-    "SELECT wallet_id FROM wallet_members WHERE user_id = %s)"
+    "SELECT wallet_id FROM wallet_members WHERE user_id = %s))"
 )
 
 

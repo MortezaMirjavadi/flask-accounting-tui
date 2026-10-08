@@ -1,15 +1,17 @@
 import { z } from "zod";
 
 export const debtSchema = z.object({
-  type: z.enum(["payable", "receivable"], { required_error: "نوع الزامی است" }),
-  counterparty_name: z.string().min(1, "نام طرف حساب الزامی است"),
+  type: z.enum(["payable", "receivable"], { required_error: "validation.typeRequired" }),
+  counterparty_name: z.string().min(1, "validation.counterpartyRequired"),
   counterparty_type: z.string().optional().default("person"),
-  title: z.string().min(1, "عنوان الزامی است"),
+  title: z.string().min(1, "validation.titleRequired"),
   description: z.string().optional().default(""),
-  original_amount: z.coerce.number().min(0.01, "مبلغ باید مثبت باشد"),
-  issue_date: z.string().min(1, "تاریخ صدور الزامی است"),
+  original_amount: z.coerce.number().min(0.01, "validation.amountPositive"),
+  issue_date: z.string().min(1, "validation.issueDateRequired"),
   due_date: z.string().optional().nullable(),
   priority: z.string().optional().default("medium"),
+  wallet_id: z.coerce.number().optional().nullable(),
+  category_id: z.coerce.number().optional().nullable(),
   source_id: z.coerce.number().optional().nullable(),
   reference_type: z.string().optional().nullable(),
   reference_id: z.coerce.number().optional().nullable(),
@@ -19,12 +21,15 @@ export const debtSchema = z.object({
 });
 
 export const debtPaymentSchema = z.object({
-  amount: z.coerce.number().min(0.01, "مبلغ باید مثبت باشد"),
-  payment_date: z.string().min(1, "تاریخ پرداخت الزامی است"),
+  amount: z.coerce.number().min(0.01, "validation.amountPositive"),
+  payment_date: z.string().min(1, "validation.paymentDateRequired"),
   payment_method: z.string().optional().default("cash"),
+  wallet_id: z.coerce.number().optional().nullable(),
+  category_id: z.coerce.number().optional().nullable(),
   source_id: z.coerce.number().optional().nullable(),
   note: z.string().optional().default(""),
 });
 
+export type DebtFormInput = z.input<typeof debtSchema>;
 export type DebtFormData = z.infer<typeof debtSchema>;
 export type DebtPaymentFormData = z.infer<typeof debtPaymentSchema>;

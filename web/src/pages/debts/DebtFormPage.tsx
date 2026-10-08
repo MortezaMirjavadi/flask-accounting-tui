@@ -4,15 +4,21 @@ import { useTranslation } from "react-i18next";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion } from "framer-motion";
-import { useCreateDebt, useUpdateDebt, useDebt } from "@/hooks";
-import { debtSchema, type DebtFormData } from "@/schemas/debt";
-import { DEBT_TYPES, PRIORITY_LEVELS, COUNTERPARTY_TYPES } from "@/lib/constants";
+import { useWalletContext } from "@/context/wallet-context";
+import { useCreateDebt, useUpdateDebt, useDebt, useCategoryTree } from "@/hooks";
+import { debtSchema, type DebtFormData, type DebtFormInput } from "@/schemas/debt";
+import {
+  DEBT_TYPES,
+  PRIORITY_LEVELS,
+  COUNTERPARTY_TYPES,
+} from "@/lib/constants";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AmountInput } from "@/components/shared/AmountInput";
 import { JalaliDatePicker } from "@/components/shared/JalaliDatePicker";
+import { CategoryTreeSelect } from "@/components/shared/CategoryTreeSelect";
 import {
   Select,
   SelectContent,
@@ -30,9 +36,23 @@ import {
 } from "@/components/ui/form";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { toast } from "sonner";
 import { Loader2, ArrowLeft } from "lucide-react";
+import { COUNTERPARTY_TYPE_LABELS } from "@/lib/enum-labels";
+import type { TranslationKey } from "@/types/i18next";
+
+/** Locale keys for the interest-type enum required by the backend. */
+const INTEREST_TYPE_LABELS: Record<"simple" | "compound" | "fixed", TranslationKey> = {
+  simple: "debts.interestSimple",
+  compound: "debts.interestCompound",
+  fixed: "debts.interestFixed",
+};
 
 export default function DebtFormPage() {
   const { id } = useParams<{ id: string }>();
@@ -45,8 +65,9 @@ export default function DebtFormPage() {
   const { data: existingDebt, isLoading: debtLoading } = useDebt(debtId);
   const createDebt = useCreateDebt();
   const updateDebt = useUpdateDebt();
+  const { activeWallet } = useWalletContext();
 
-  const form = useForm<DebtFormData>({
+  const form = useForm<DebtFormInput, unknown, DebtFormData>({
     resolver: zodResolver(debtSchema),
     defaultValues: {
       type: "payable",
@@ -58,10 +79,18 @@ export default function DebtFormPage() {
       issue_date: "",
       due_date: "",
       priority: "medium",
+      category_id: null,
       has_interest: false,
+      interest_type: "simple",
       interest_rate: null,
     },
   });
+
+  // Category is used when registering payment transactions:
+  // payable debts pay out (cost categories), receivables pay in (income).
+  const debtType = useWatch({ control: form.control, name: "type" });
+  const categoryFilterType = debtType === "receivable" ? "income" : "cost";
+  const { data: categoriesTree } = useCategoryTree({ type: categoryFilterType });
 
   useEffect(() => {
     if (isEditing && existingDebt) {
@@ -75,31 +104,42 @@ export default function DebtFormPage() {
         issue_date: existingDebt.issue_date,
         due_date: existingDebt.due_date || "",
         priority: existingDebt.priority || "medium",
+        category_id: existingDebt.category_id ?? null,
         has_interest: existingDebt.has_interest || false,
+        interest_type: (existingDebt.interest_type as "simple" | "compound" | "fixed") || "simple",
         interest_rate: existingDebt.interest_rate,
       });
     }
   }, [existingDebt, isEditing, form]);
 
   const onSubmit = (data: DebtFormData) => {
+    // Surface the backend's error message (ApiError.message) in the toast.
+    const onError = (err: unknown) =>
+      toast.error(err instanceof Error && err.message ? err.message : t("common.error"));
+    // Bind the debt to the active wallet so it appears in the wallet-scoped
+    // list; on edit, keep the debt's original wallet if it has one.
+    const payload = {
+      ...data,
+      wallet_id: isEditing ? (existingDebt?.wallet_id ?? activeWallet?.id) : activeWallet?.id,
+    };
     if (isEditing) {
       updateDebt.mutate(
-        { id: debtId, data },
+        { id: debtId, data: payload },
         {
           onSuccess: () => {
             toast.success(t("common.success"));
             navigate(`/debts/${debtId}`);
           },
-          onError: () => toast.error(t("common.error")),
+          onError,
         },
       );
     } else {
-      createDebt.mutate(data, {
+      createDebt.mutate(payload, {
         onSuccess: () => {
           toast.success(t("common.success"));
           navigate("/debts");
         },
-        onError: () => toast.error(t("common.error")),
+        onError,
       });
     }
   };
@@ -220,7 +260,7 @@ export default function DebtFormPage() {
                   <SelectContent>
                     {COUNTERPARTY_TYPES.map((type) => (
                       <SelectItem key={type} value={type}>
-                        {type}
+                        {t(COUNTERPARTY_TYPE_LABELS[type])}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -233,12 +273,47 @@ export default function DebtFormPage() {
 
         <FormField
           control={form.control}
+          name="category_id"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t("transactions.category")}</FormLabel>
+              <div className="flex items-center gap-2">
+                <FormControl>
+                  <CategoryTreeSelect
+                    categories={categoriesTree ?? []}
+                    value={field.value ?? undefined}
+                    onChange={field.onChange}
+                    placeholder={t("common.select")}
+                  />
+                </FormControl>
+                {field.value != null && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => field.onChange(null)}
+                  >
+                    {t("common.clear")}
+                  </Button>
+                )}
+              </div>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
           name="original_amount"
           render={({ field }) => (
             <FormItem>
               <FormLabel>{t("debts.originalAmount")}</FormLabel>
               <FormControl>
-                <AmountInput value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
+                <AmountInput
+                  value={field.value}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
+                />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -253,7 +328,10 @@ export default function DebtFormPage() {
               <FormItem>
                 <FormLabel>{t("checks.issueDate")}</FormLabel>
                 <FormControl>
-                  <JalaliDatePicker value={field.value} onChange={field.onChange} />
+                  <JalaliDatePicker
+                    value={field.value}
+                    onChange={field.onChange}
+                  />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -267,7 +345,10 @@ export default function DebtFormPage() {
               <FormItem>
                 <FormLabel>{t("checks.dueDate")}</FormLabel>
                 <FormControl>
-                  <JalaliDatePicker value={field.value || ""} onChange={field.onChange} />
+                  <JalaliDatePicker
+                    value={field.value || ""}
+                    onChange={field.onChange}
+                  />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -298,13 +379,41 @@ export default function DebtFormPage() {
                 <FormLabel>{t("debts.hasInterest")}</FormLabel>
               </div>
               <FormControl>
-                <Switch checked={field.value} onCheckedChange={field.onChange} />
+                <Switch
+                  checked={field.value}
+                  onCheckedChange={field.onChange}
+                />
               </FormControl>
             </FormItem>
           )}
         />
 
         {form.watch("has_interest") && (
+          <>
+          <FormField
+            control={form.control}
+            name="interest_type"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t("debts.interestType")}</FormLabel>
+                <Select onValueChange={field.onChange} value={field.value ?? "simple"}>
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {(Object.keys(INTEREST_TYPE_LABELS) as Array<keyof typeof INTEREST_TYPE_LABELS>).map((type) => (
+                      <SelectItem key={type} value={type}>
+                        {t(INTEREST_TYPE_LABELS[type])}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
           <FormField
             control={form.control}
             name="interest_rate"
@@ -315,13 +424,18 @@ export default function DebtFormPage() {
                   <Input
                     type="number"
                     value={field.value ?? ""}
-                    onChange={(e) => field.onChange(e.target.value ? Number(e.target.value) : null)}
+                    onChange={(e) =>
+                      field.onChange(
+                        e.target.value ? Number(e.target.value) : null,
+                      )
+                    }
                   />
                 </FormControl>
                 <FormMessage />
               </FormItem>
             )}
           />
+          </>
         )}
 
         <div className="flex justify-end gap-2">
@@ -343,8 +457,15 @@ export default function DebtFormPage() {
 
   if (isMobile) {
     return (
-      <Sheet open={true} onOpenChange={(open) => !open && navigate(-1)} direction="bottom">
-        <SheetContent side="bottom" className="max-h-[90vh] overflow-y-auto px-4 pb-8">
+      <Sheet
+        open={true}
+        onOpenChange={(open) => !open && navigate(-1)}
+        direction="bottom"
+      >
+        <SheetContent
+          side="bottom"
+          className="max-h-[90vh] overflow-y-auto px-4 pb-8"
+        >
           <SheetHeader className="text-start">
             <SheetTitle>
               {isEditing ? t("debts.editTitle") : t("debts.addTitle")}
@@ -365,7 +486,11 @@ export default function DebtFormPage() {
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/debts")}>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate("/debts")}
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <h1 className="text-2xl font-bold">
@@ -380,9 +505,7 @@ export default function DebtFormPage() {
             {isEditing ? t("debts.editTitle") : t("debts.addTitle")}
           </CardTitle>
         </CardHeader>
-        <CardContent>
-          {formContent}
-        </CardContent>
+        <CardContent>{formContent}</CardContent>
       </Card>
     </motion.div>
   );

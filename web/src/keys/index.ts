@@ -10,6 +10,8 @@ export const queryKeys = {
       [...queryKeys.categories.all, "list", filters] as const,
     detail: (id: number) =>
       [...queryKeys.categories.all, "detail", id] as const,
+    tree: (filters?: Record<string, string>) =>
+      [...queryKeys.categories.all, "tree", filters] as const,
   },
 
   wallets: {
@@ -181,6 +183,14 @@ export const queryKeys = {
     all: ["exchange-rates"] as const,
     list: () => [...queryKeys.exchangeRates.all, "list"] as const,
     currencies: () => [...queryKeys.exchangeRates.all, "currencies"] as const,
+  },
+
+  // Alias for backward compatibility (legacy code uses queryKeys.sources)
+  sources: {
+    all: ["wallets"] as const,
+    list: (filters?: Record<string, string>) =>
+      [...queryKeys.sources.all, "list", filters] as const,
+    detail: (id: number) => [...queryKeys.sources.all, "detail", id] as const,
   },
 
   metadata: {

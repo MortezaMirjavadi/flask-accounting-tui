@@ -1,9 +1,10 @@
 import { useTranslation } from "react-i18next";
 import { Inbox } from "lucide-react";
+import type { TranslationKey } from "@/types/i18next";
 
 interface EmptyStateProps {
-  titleKey?: string;
-  descriptionKey?: string;
+  titleKey?: TranslationKey;
+  descriptionKey?: TranslationKey;
   icon?: React.ReactNode;
 }
 

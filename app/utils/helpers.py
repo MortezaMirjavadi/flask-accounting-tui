@@ -10,6 +10,12 @@ def row_to_dict(row):
     return dict(row)
 
 
+def get_locale_from_request():
+    """Return user locale from the Accept-Language header ('fa' or 'en')."""
+    accept_language = request.headers.get("Accept-Language", "")
+    return "fa" if accept_language.lower().startswith("fa") else "en"
+
+
 def get_user_id_from_request():
     """Extract username from request and return user_id."""
     username = request.headers.get("X-Username", "").strip()

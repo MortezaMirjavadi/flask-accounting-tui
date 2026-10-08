@@ -232,6 +232,61 @@ export default function TransactionDetailPage() {
               </div>
             </>
           )}
+
+          {((transaction.tags && transaction.tags.length > 0) ||
+            (transaction.labels && transaction.labels.length > 0)) && (
+            <>
+              <Separator />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    {t("nav.tags")}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {transaction.tags?.map((tag) => (
+                      <span
+                        key={`tag-${tag.id}`}
+                        className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary"
+                        style={
+                          tag.color
+                            ? { backgroundColor: tag.color, color: "#fff" }
+                            : undefined
+                        }
+                      >
+                        {tag.name}
+                      </span>
+                    ))}
+                    {!transaction.tags?.length && (
+                      <span className="text-sm text-muted-foreground">-</span>
+                    )}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    {t("nav.labels")}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {transaction.labels?.map((label) => (
+                      <span
+                        key={`label-${label.id}`}
+                        className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground"
+                        style={
+                          label.color
+                            ? { backgroundColor: label.color, color: "#fff" }
+                            : undefined
+                        }
+                      >
+                        {label.name}
+                      </span>
+                    ))}
+                    {!transaction.labels?.length && (
+                      <span className="text-sm text-muted-foreground">-</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
 

@@ -1,19 +1,19 @@
 import { z } from "zod";
 
 export const transactionItemSchema = z.object({
-  name: z.string().min(1, "نام قلم الزامی است"),
-  quantity: z.coerce.number().min(0.01, "تعداد باید مثبت باشد"),
+  name: z.string().min(1, "validation.itemNameRequired"),
+  quantity: z.coerce.number().min(0.01, "validation.quantityPositive"),
   unit: z.string().optional().default(""),
-  unit_price: z.coerce.number().min(0, "قیمت واحد نمی‌تواند منفی باشد"),
-  total_price: z.coerce.number().min(0, "قیمت کل نمی‌تواند منفی باشد"),
+  unit_price: z.coerce.number().min(0, "validation.amountNonNegative"),
+  total_price: z.coerce.number().min(0, "validation.amountNonNegative"),
   notes: z.string().optional().default(""),
 });
 
 export const transactionSchema = z.object({
-  date: z.string().min(1, "تاریخ الزامی است"),
-  amount: z.coerce.number().min(0.01, "مبلغ باید مثبت باشد"),
-  category_id: z.coerce.number().min(1, "دسته‌بندی الزامی است"),
-  source_id: z.coerce.number().min(1, "حساب الزامی است"),
+  date: z.string().min(1, "validation.dateRequired"),
+  amount: z.coerce.number().min(0.01, "validation.amountPositive"),
+  category_id: z.coerce.number().min(1, "validation.categoryRequired"),
+  source_id: z.coerce.number().min(1, "validation.accountRequired"),
   account_id: z.number().optional(),
   wallet_id: z.number().optional(),
   is_private: z.boolean().optional().default(false),
@@ -22,10 +22,10 @@ export const transactionSchema = z.object({
 });
 
 export const transferSchema = z.object({
-  from_account_id: z.coerce.number().min(1, "حساب مبدا الزامی است"),
-  to_account_id: z.coerce.number().min(1, "حساب مقصد الزامی است"),
-  amount: z.coerce.number().min(0.01, "مبلغ باید مثبت باشد"),
-  date: z.string().min(1, "تاریخ الزامی است"),
+  from_account_id: z.coerce.number().min(1, "validation.fromAccountRequired"),
+  to_account_id: z.coerce.number().min(1, "validation.toAccountRequired"),
+  amount: z.coerce.number().min(0.01, "validation.amountPositive"),
+  date: z.string().min(1, "validation.dateRequired"),
   notes: z.string().optional().default(""),
 });
 

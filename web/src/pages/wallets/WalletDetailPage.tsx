@@ -30,7 +30,7 @@ import {
   useUpdateMemberRole,
 } from "@/hooks/wallets";
 import { useAccounts, useDeleteAccount } from "@/hooks/accounts";
-import { walletSchema, type WalletFormData } from "@/schemas/wallet";
+import { walletSchema, type WalletFormData, type WalletFormInput } from "@/schemas/wallet";
 import { SUPPORTED_CURRENCIES, type Account } from "@/types";
 import { formatToman, formatJalali, formatCurrency } from "@/lib/format";
 import { getBankById } from "@/lib/bankConfig";
@@ -60,31 +60,37 @@ import {
 } from "@/components/ui/form";
 import { toast } from "sonner";
 
-const CURRENCY_LABELS: Record<string, string> = {
-  IRR: "IRR (تومان)",
-  USD: "USD ($)",
-  EUR: "EUR (€)",
-  GBP: "GBP (£)",
-  AED: "AED (د.إ)",
-};
+function useCurrencyLabels(): Record<string, string> {
+  const { t } = useTranslation();
+  return {
+    IRR: `IRR (${t("currencies.IRR")})`,
+    USD: `USD ($)`,
+    EUR: `EUR (€)`,
+    GBP: `GBP (£)`,
+    AED: `AED (د.إ)`,
+  };
+}
 
 function RoleBadge({ role }: { role: string }) {
+  const { t } = useTranslation();
   const variant =
     role === "owner"
       ? "default"
       : role === "editor"
         ? "secondary"
         : "outline";
+  const label = t(`wallets.${role}`, role);
   return (
-    <Badge variant={variant} className="capitalize">
-      {role}
+    <Badge variant={variant}>
+      {label}
     </Badge>
   );
 }
 
 function MembersTab({ walletId }: { walletId: number }) {
   const { t } = useTranslation();
-  const { data: members, isLoading } = useWalletMembers(walletId);
+  const { data: membersResp, isLoading } = useWalletMembers(walletId);
+  const members = membersResp?.items;
   const removeMember = useRemoveMember(walletId);
   const updateRole = useUpdateMemberRole(walletId);
   const inviteMutation = useInviteToWallet(walletId);
@@ -302,7 +308,8 @@ function MembersTab({ walletId }: { walletId: number }) {
 
 function ActivityTab({ walletId }: { walletId: number }) {
   const { t } = useTranslation();
-  const { data: activities, isLoading } = useWalletActivity(walletId);
+  const { data: activitiesResp, isLoading } = useWalletActivity(walletId);
+  const activities = activitiesResp?.items;
 
   if (isLoading) {
     return (
@@ -355,8 +362,9 @@ function SettingsTab({ walletId }: { walletId: number }) {
   const { t } = useTranslation();
   const { data: wallet, isLoading } = useWallet(walletId);
   const updateMutation = useUpdateWallet();
+  const CURRENCY_LABELS = useCurrencyLabels();
 
-  const form = useForm<WalletFormData>({
+  const form = useForm<WalletFormInput, unknown, WalletFormData>({
     resolver: zodResolver(walletSchema),
     defaultValues: {
       name: "",
@@ -748,8 +756,8 @@ export default function WalletDetailPage() {
                     <p className="text-sm font-medium">
                       {t("wallets.yourRole")}
                     </p>
-                    <p className="text-xs capitalize text-muted-foreground">
-                      {wallet.role ?? "—"}
+                    <p className="text-xs text-muted-foreground">
+                      {wallet.role ? t(`wallets.${wallet.role}`) : "—"}
                     </p>
                   </div>
                 </CardContent>

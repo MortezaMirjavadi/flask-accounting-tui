@@ -1,8 +1,5 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
-import { useEffect } from "react";
-import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/auth-context";
-import { useDirection } from "@/i18n/hooks";
 import { WalletProvider, useWalletContext } from "@/context/wallet-context";
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { TopBar } from "@/components/layout/TopBar";
@@ -42,13 +39,6 @@ function AppContent() {
 
 export default function RootLayout() {
   const { isAuthenticated, isLoading } = useAuth();
-  const { i18n } = useTranslation();
-  const direction = useDirection();
-
-  useEffect(() => {
-    document.documentElement.lang = i18n.language;
-    document.documentElement.dir = direction;
-  }, [i18n.language, direction]);
 
   if (isLoading) {
     return <LoadingPage />;

@@ -77,7 +77,8 @@ def list_wallets():
         data_sql = (
             "SELECT w.*, wm.role,"
             " (SELECT COUNT(*) FROM wallet_members WHERE wallet_id = w.id) AS member_count,"
-            " (SELECT COUNT(*) FROM accounts WHERE wallet_id = w.id AND deleted_at IS NULL) AS account_count"
+            " (SELECT COUNT(*) FROM accounts WHERE wallet_id = w.id AND deleted_at IS NULL) AS account_count,"
+            " (SELECT COALESCE(SUM(a.amount), 0) FROM accounts a WHERE a.wallet_id = w.id AND a.deleted_at IS NULL) AS total_balance"
             + join_clause + where_clause + " ORDER BY w.user_id = %s DESC, w.name"
         )
         data_params = [user_id] + params + [user_id]
@@ -1667,6 +1668,8 @@ def update_account(wallet_id, account_id):
               enum: [cash, bank, card, savings, wallet, other]
             bank_type:
               type: string
+            amount:
+              type: number
             icon:
               type: string
             description:
@@ -1706,6 +1709,7 @@ def update_account(wallet_id, account_id):
         name = data.get("name", account['name']).strip()
         account_type = data.get("account_type", account['account_type'])
         bank_type = data.get("bank_type", account['bank_type'])
+        amount = data.get("amount", account['amount'])
         icon = data.get("icon", account['icon'])
         description = data.get("description", account['description'])
         sort_order = data.get("sort_order", account['sort_order'])
@@ -1714,14 +1718,20 @@ def update_account(wallet_id, account_id):
             return jsonify({"error": "نام حساب الزامی است"}), 400
         if account_type not in VALID_ACCOUNT_TYPES:
             return jsonify({"error": f"نوع حساب نامعتبر"}), 400
+        try:
+            amount = float(amount)
+            if amount < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return jsonify({"error": "مبلغ نامعتبر است"}), 400
 
         cursor.execute(
             """
             UPDATE accounts SET name = %s, account_type = %s, bank_type = %s,
-                   icon = %s, description = %s, sort_order = %s
+                   amount = %s, icon = %s, description = %s, sort_order = %s
             WHERE id = %s AND wallet_id = %s
             """,
-            (name, account_type, bank_type, icon, description, sort_order, account_id, wallet_id),
+            (name, account_type, bank_type, amount, icon, description, sort_order, account_id, wallet_id),
         )
 
         log_wallet_activity(cursor, wallet_id, user_id, ACTION_ACCOUNT_UPDATED,
@@ -1730,7 +1740,7 @@ def update_account(wallet_id, account_id):
 
         conn.commit()
         return jsonify({"id": account_id, "wallet_id": wallet_id, "name": name,
-                        "account_type": account_type})
+                        "account_type": account_type, "amount": amount})
     except psycopg2.IntegrityError:
         conn.rollback()
         return jsonify({"error": "حسابی با این نام در این کیف پول قبلاً وجود دارد"}), 400

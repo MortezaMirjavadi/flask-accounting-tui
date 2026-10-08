@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, apiPut, apiDelete } from "@/api";
 import { queryKeys } from "@/keys";
-import type { BudgetPeriod, BudgetPeriodWithItems, BudgetItem } from "@/types";
+import type { BudgetPeriod, BudgetPeriodWithItems, BudgetItem, ApiListResponse } from "@/types";
 import type { BudgetPeriodFormData, BudgetItemFormData } from "@/schemas/budget";
 
 export function useBudgetPeriods() {
@@ -29,8 +29,10 @@ export function useBudgetPeriod(id: number) {
 export function useBudgetItems(periodId: number) {
   return useQuery({
     queryKey: queryKeys.budget.items(periodId),
-    queryFn: () => apiGet<BudgetItem[]>(`/budget/periods/${periodId}/items`),
+    queryFn: () =>
+      apiGet<ApiListResponse<BudgetItem>>(`/budget/periods/${periodId}/items?per_page=1000`),
     enabled: !!periodId,
+    select: (data) => data.items,
   });
 }
 

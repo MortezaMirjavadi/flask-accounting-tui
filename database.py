@@ -681,6 +681,13 @@ def init_db():
         ):
             _ensure_column(cursor, table_name, "deleted_at", "TIMESTAMP")
 
+        # ── Categories: add parent_id for tree structure ────────────────
+        _ensure_column(cursor, "categories", "parent_id", "INTEGER REFERENCES categories(id) ON DELETE SET NULL")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id)")
+
+        # ── Debts: add category_id so payments can register transactions ──
+        _ensure_column(cursor, "debts", "category_id", "INTEGER REFERENCES categories(id) ON DELETE SET NULL")
+
         for table_name in (
             "users",
             "categories",

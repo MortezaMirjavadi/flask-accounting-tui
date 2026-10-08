@@ -1,4 +1,4 @@
-export { useCategories, useCategory, useCreateCategory, useUpdateCategory, useDeleteCategory } from "./categories";
+export { useCategories, useCategory, useCategoryTree, useCreateCategory, useUpdateCategory, useDeleteCategory } from "./categories";
 export { useSources, useSource, useSourceBalance, useSourceTransfers, useCreateSource, useUpdateSource, useDeleteSource } from "./sources";
 export { useTransactions, useTransaction, useTransactionItems, useCreateTransaction, useUpdateTransaction, useDeleteTransaction, useAddTransactionItem, useUpdateTransactionItem, useDeleteTransactionItem, useCreateTransfer } from "./transactions";
 export { useBudgetPeriods, useBudgetPeriodsWithItems, useBudgetPeriod, useBudgetItems, useCreateBudgetPeriod, useUpdateBudgetPeriod, useDeleteBudgetPeriod, useCreateBudgetItem, useUpdateBudgetItem, useDeleteBudgetItem } from "./budget";

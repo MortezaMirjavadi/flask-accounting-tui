@@ -9,7 +9,8 @@ from textual.containers import Container, Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 
-from tui.api import api_get, format_toman, handle_response
+
+from tui.api import api_get, format_toman, extract_items, handle_response
 from tui.widgets import HelpTip, MessageBox, StatusBar
 
 
@@ -122,7 +123,7 @@ class AdvancedReportScreen(Screen):
             self.app.push_screen(MessageBox(err, "Error"))
             return
 
-        self._report_data = data
+        self._report_data = extract_items(data)
         self.render_report()
 
     def render_report(self):

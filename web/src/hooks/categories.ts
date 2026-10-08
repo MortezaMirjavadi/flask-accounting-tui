@@ -26,6 +26,20 @@ export function useCategories(filters?: Record<string, string>, pagination?: Pag
   });
 }
 
+export function useCategoryTree(filters?: Record<string, string>) {
+  const params = new URLSearchParams({ tree: "true" });
+  if (filters) {
+    Object.entries(filters).forEach(([k, v]) => {
+      if (v !== undefined && v !== "") params.set(k, v);
+    });
+  }
+  const qs = params.toString();
+  return useQuery({
+    queryKey: queryKeys.categories.tree(filters),
+    queryFn: () => apiGet<Category[]>(`/categories?${qs}`),
+  });
+}
+
 export function useCategory(id: number) {
   return useQuery({
     queryKey: queryKeys.categories.detail(id),

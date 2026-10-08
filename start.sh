@@ -29,15 +29,15 @@ cleanup() {
 
 trap cleanup INT TERM
 
-# Start API server in background
+# Start API server in background (suppress output so TUI terminal stays clean)
 echo -e "${GREEN}Starting API server...${NC}"
-python run_api.py &
+python run_api.py > /dev/null 2>&1 &
 API_PID=$!
 
 # Wait for API to be ready
 echo -e "${YELLOW}Waiting for API to start...${NC}"
 for i in {1..30}; do
-    if curl -s http://127.0.0.1:5000/auth/me > /dev/null 2>&1; then
+    if curl -s http://127.0.0.1:5001/auth/me > /dev/null 2>&1; then
         echo -e "${GREEN}API is ready!${NC}"
         break
     fi

@@ -12,7 +12,7 @@ from textual.widgets import (
     ListItem, ListView, Select, Static, Rule, TextArea
 )
 
-from tui.api import api_get, api_post, api_put, api_delete, handle_response, format_toman
+from tui.api import api_get, api_post, api_put, api_delete, extract_items, handle_response, format_toman
 from tui.jalali_date_picker import JalaliDatePicker
 from tui.widgets import ConfirmBox, HelpTip, MessageBox, StatusBar, TransactionItemsModal
 
@@ -103,8 +103,8 @@ class TransactionListScreen(Screen):
                 yield Input(placeholder="Min amount", id="tx_filter_min")
                 yield Input(placeholder="Max amount", id="tx_filter_max")
                 yield Input(placeholder="Description", id="tx_filter_desc")
-                yield Button("Filter", variant="primary", id="tx_filter_btn")
-                yield Button("Reset", variant="default", id="tx_reset_btn")
+                yield Button("🔍 Filter", variant="primary", id="tx_filter_btn")
+                yield Button("🔄 Reset", variant="default", id="tx_reset_btn")
             with Horizontal(classes="split_row"):
                 with Vertical(classes="left_pane"):
                     yield DataTable(id="tx_table")
@@ -140,7 +140,7 @@ class TransactionListScreen(Screen):
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
-        self._data = data or []
+        self._data = extract_items(data)
         self._selected_id = None  # Reset selection cache
         if not self._data:
             table.add_row("-", "-", "-", "No transactions", "-", "-")
@@ -584,8 +584,8 @@ class TransactionAddScreen(Screen):
                 yield Label("ITEMS (optional):", classes="section_header")
                 yield Button("Items (0)", variant="default", id="open_items_btn")
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", variant="default", id="cancel")
+                yield Button("💾 Save", variant="primary", id="save")
+                yield Button("✖ Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Ctrl+D] Date picker  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Ctrl+D=Date Picker  Enter=Save  Esc=Cancel", id="status")
@@ -615,7 +615,7 @@ class TransactionAddScreen(Screen):
         data, err = handle_response(resp)
         if err or not data:
             return
-        options = [(t["name"], t["id"]) for t in data]
+        options = [(t["name"], t["id"]) for t in extract_items(data)]
         self.query_one("#tx_tag_select", Select).set_options(options)
 
     def _load_label_options(self):
@@ -623,7 +623,7 @@ class TransactionAddScreen(Screen):
         data, err = handle_response(resp)
         if err or not data:
             return
-        options = [(l["name"], l["id"]) for l in data]
+        options = [(l["name"], l["id"]) for l in extract_items(data)]
         self.query_one("#tx_label_select", Select).set_options(options)
 
     def load_categories(self):
@@ -636,7 +636,7 @@ class TransactionAddScreen(Screen):
         if not data:
             self._category_options = []
         else:
-            self._category_options = [(f"{c['name']} ({c['type']})", c["id"]) for c in data]
+            self._category_options = [(f"{c['name']} ({c['type']})", c["id"]) for c in extract_items(data)]
         self._apply_dynamic_fields(self.query_one("#tx_is_transfer", Checkbox).value)
 
     def load_wallets(self):
@@ -648,7 +648,7 @@ class TransactionAddScreen(Screen):
         if not data:
             self._wallet_options = []
         else:
-            self._wallet_options = [(s["name"], s["id"]) for s in data]
+            self._wallet_options = [(s["name"], s["id"]) for s in extract_items(data)]
         self._apply_dynamic_fields(self.query_one("#tx_is_transfer", Checkbox).value)
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
@@ -904,8 +904,8 @@ class TransactionEditScreen(Screen):
                 yield Label("ITEMS (optional):", classes="section_header")
                 yield Button("Items (0)", variant="default", id="open_items_btn")
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", variant="default", id="cancel")
+                yield Button("💾 Save", variant="primary", id="save")
+                yield Button("✖ Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Ctrl+D] Date picker  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Ctrl+D=Date Picker  Enter=Save  Esc=Cancel", id="status")
@@ -984,7 +984,7 @@ class TransactionEditScreen(Screen):
         if not data:
             self._category_options = []
         else:
-            self._category_options = [(f"{c['name']} ({c['type']})", c["id"]) for c in data]
+            self._category_options = [(f"{c['name']} ({c['type']})", c["id"]) for c in extract_items(data)]
         self._apply_dynamic_fields(self.query_one("#tx_is_transfer", Checkbox).value)
 
     def load_wallets(self):
@@ -997,7 +997,7 @@ class TransactionEditScreen(Screen):
         if not data:
             self._wallet_options = []
         else:
-            self._wallet_options = [(s["name"], s["id"]) for s in data]
+            self._wallet_options = [(s["name"], s["id"]) for s in extract_items(data)]
         self._apply_dynamic_fields(self.query_one("#tx_is_transfer", Checkbox).value)
 
     def _load_tag_options(self):
@@ -1005,7 +1005,7 @@ class TransactionEditScreen(Screen):
         data, err = handle_response(resp)
         if err or not data:
             return
-        options = [(t["name"], t["id"]) for t in data]
+        options = [(t["name"], t["id"]) for t in extract_items(data)]
         self.query_one("#tx_tag_select", Select).set_options(options)
         # Pre-select existing tag
         try:
@@ -1021,7 +1021,7 @@ class TransactionEditScreen(Screen):
         data, err = handle_response(resp)
         if err or not data:
             return
-        options = [(l["name"], l["id"]) for l in data]
+        options = [(l["name"], l["id"]) for l in extract_items(data)]
         self.query_one("#tx_label_select", Select).set_options(options)
         # Pre-select existing label
         try:
