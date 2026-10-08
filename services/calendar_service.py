@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import math
 import psycopg2
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Iterable, Optional
 
 from database import get_connection, release_connection
+from services.balance_utils import get_wallet_balance, to_decimal
 
 
 ALLOWED_FREQUENCIES = ("once", "daily", "weekly", "monthly", "yearly")
@@ -21,7 +23,7 @@ class CalendarEvent:
     description: Optional[str]
     amount: float
     category_id: int
-    source_id: Optional[int]
+    wallet_id: Optional[int]
     frequency: str
     repeat_interval: int
     start_date: str
@@ -42,7 +44,7 @@ class EventInstance:
     category_id: int
     category_name: str
     category_type: str
-    source_id: Optional[int]
+    wallet_id: Optional[int]
     status: str
     transaction_id: Optional[int]
 
@@ -53,7 +55,7 @@ class EventPayload:
     description: Optional[str]
     amount: float
     category_id: int
-    source_id: Optional[int]
+    wallet_id: Optional[int]
     frequency: str
     repeat_interval: int
     start_date: str
@@ -98,10 +100,24 @@ class CalendarService:
     """High-level CRUD + recurrence operations for financial calendar events."""
 
     @staticmethod
-    def get_balance_sources(conn: psycopg2.extensions.connection) -> list[tuple]:
+    def get_balance_wallets(conn: psycopg2.extensions.connection) -> list[tuple]:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, amount FROM sources WHERE deleted_at IS NULL")
-        return [(row["id"], row["name"], row["amount"] or 0.0) for row in cursor.fetchall()]
+        cursor.execute(
+            """
+            SELECT w.id, w.name,
+                COALESCE((SELECT SUM(a.amount) FROM accounts a
+                          WHERE a.wallet_id = w.id AND a.deleted_at IS NULL), 0)
+                + COALESCE((SELECT SUM(CASE WHEN c.type = 'income' THEN t.amount ELSE -t.amount END)
+                            FROM transactions t
+                            LEFT JOIN categories c ON c.id = t.category_id
+                            WHERE t.wallet_id = w.id AND t.user_id = w.user_id
+                              AND t.deleted_at IS NULL), 0)
+                AS balance
+            FROM wallets w
+            WHERE w.deleted_at IS NULL
+            """
+        )
+        return [(row["id"], row["name"], float(row["balance"] or 0.0)) for row in cursor.fetchall()]
 
     @staticmethod
     def get_active_category(cursor, category_id: int, user_id: int):
@@ -112,10 +128,10 @@ class CalendarService:
         return cursor.fetchone()
 
     @staticmethod
-    def get_active_source(cursor, source_id: int, user_id: int):
+    def get_active_wallet(cursor, wallet_id: int, user_id: int):
         cursor.execute(
-            "SELECT id, amount, name FROM sources WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
-            (source_id, user_id),
+            "SELECT id, name FROM wallets WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
+            (wallet_id, user_id),
         )
         return cursor.fetchone()
 
@@ -125,7 +141,7 @@ class CalendarService:
         description = (payload.get("description") or "").strip() or None
         amount = payload.get("amount")
         category_id = payload.get("category_id")
-        source_id = payload.get("source_id")
+        wallet_id = payload.get("wallet_id")
         frequency = (payload.get("frequency") or "once").strip().lower()
         repeat_interval = payload.get("repeat_interval", 1)
         start_raw = payload.get("start_date")
@@ -134,89 +150,89 @@ class CalendarService:
         occurrence_limit = payload.get("occurrence_limit")
 
         if not title:
-            raise ValueError("Title is required")
+            raise ValueError("عنوان الزامی است")
 
         try:
             amount = float(amount)
             if amount <= 0:
                 raise ValueError
         except (TypeError, ValueError):
-            raise ValueError("Amount must be a positive number")
+            raise ValueError("مبلغ باید عددی مثبت باشد")
 
         try:
             category_id = int(category_id)
         except (TypeError, ValueError):
-            raise ValueError("Valid category_id is required")
+            raise ValueError("شناسه دسته‌بندی معتبر الزامی است")
 
-        if source_id is not None:
+        if wallet_id is not None:
             try:
-                source_id = int(source_id)
+                wallet_id = int(wallet_id)
             except (TypeError, ValueError):
-                raise ValueError("source_id must be an integer")
+                raise ValueError("شناسه کیف پول باید عدد صحیح باشد")
             # Existence check only. Balance sufficiency is validated at confirm time.
             conn = get_connection()
             cursor = conn.cursor()
             try:
-                if CalendarService.get_active_source(cursor, source_id, user_id) is None:
-                    raise ValueError("Source does not exist")
+                if CalendarService.get_active_wallet(cursor, wallet_id, user_id) is None:
+                    raise ValueError("کیف پول وجود ندارد")
             finally:
                 cursor.close()
                 release_connection(conn)
 
         if frequency not in ALLOWED_FREQUENCIES:
-            raise ValueError(f"frequency must be one of: {', '.join(ALLOWED_FREQUENCIES)}")
+            raise ValueError(f"تناوب باید یکی از موارد زیر باشد: {', '.join(ALLOWED_FREQUENCIES)}")
 
         try:
             repeat_interval = int(repeat_interval)
             if repeat_interval < 1:
                 raise ValueError
         except (TypeError, ValueError):
-            raise ValueError("repeat_interval must be >= 1")
+            raise ValueError("فاصله تکرار باید بزرگتر یا مساوی ۱ باشد")
 
         if frequency == "once":
             repeat_interval = 1
         try:
             start = _to_date(start_raw)
         except (TypeError, ValueError) as exc:
-            raise ValueError("start_date must be in YYYY-MM-DD format") from exc
+            raise ValueError("تاریخ شروع باید به فرمت YYYY-MM-DD باشد") from exc
 
         today = date.today()
         if start < today:
-            raise ValueError("start_date must be today or in the future")
+            raise ValueError("تاریخ شروع باید امروز یا بعد باشد")
 
         if frequency != "once" and not description:
-            raise ValueError("description is required for recurring events")
+            raise ValueError("توضیحات برای رویدادهای تکراری الزامی است")
 
         if end_raw:
             try:
                 end = _to_date(end_raw)
             except (TypeError, ValueError) as exc:
-                raise ValueError("end_date must be in YYYY-MM-DD format") from exc
+                raise ValueError("تاریخ پایان باید به فرمت YYYY-MM-DD باشد") from exc
             end_date = end.strftime("%Y-%m-%d")
             if end < start:
-                raise ValueError("end_date cannot be before start_date")
+                raise ValueError("تاریخ پایان نمی‌تواند قبل از تاریخ شروع باشد")
 
         if occurrence_limit is not None:
             try:
                 occurrence_limit = int(occurrence_limit)
             except (TypeError, ValueError):
-                raise ValueError("occurrence_limit must be an integer")
+                raise ValueError("محدودیت تکرار باید عدد صحیح باشد")
             if occurrence_limit < 1:
-                raise ValueError("occurrence_limit must be >= 1")
+                raise ValueError("محدودیت تکرار باید بزرگتر یا مساوی ۱ باشد")
             if frequency == "once" and occurrence_limit != 1:
-                raise ValueError("occurrence_limit for once events should be 1 or null")
+                raise ValueError("محدودیت تکرار برای رویدادهای یکبار باید ۱ یا خالی باشد")
 
         conn = get_connection()
         try:
             cursor = conn.cursor()
             if CalendarService.get_active_category(cursor, category_id, user_id) is None:
-                raise ValueError("Category does not exist")
+                raise ValueError("دسته‌بندی وجود ندارد")
             return EventPayload(
                 title=title,
                 description=description,
                 amount=amount,
                 category_id=category_id,
-                source_id=source_id,
+                wallet_id=wallet_id,
                 frequency=frequency,
                 repeat_interval=repeat_interval,
                 start_date=start.strftime("%Y-%m-%d"),
@@ -242,12 +258,12 @@ class CalendarService:
                 data.amount,
                 data.start_date,
             ):
-                raise ValueError("An identical event already exists on the selected date")
+                raise ValueError("رویداد مشابهی قبلاً وجود دارد")
 
             cursor.execute(
                 """
                 INSERT INTO financial_events (
-                    user_id, title, description, amount, category_id, source_id,
+                    user_id, title, description, amount, category_id, wallet_id,
                     frequency, repeat_interval, start_date, end_date, occurrence_limit
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
                 """,
@@ -257,7 +273,7 @@ class CalendarService:
                     data.description,
                     data.amount,
                     data.category_id,
-                    data.source_id,
+                    data.wallet_id,
                     data.frequency,
                     data.repeat_interval,
                     data.start_date,
@@ -283,7 +299,7 @@ class CalendarService:
                 "description": event["description"],
                 "amount": event["amount"],
                 "category_id": event["category_id"],
-                "source_id": event["source_id"],
+                "wallet_id": event["wallet_id"],
                 "frequency": event["frequency"],
                 "repeat_interval": event["repeat_interval"],
                 "start_date": event["start_date"],
@@ -322,7 +338,7 @@ class CalendarService:
     def _fetch_event(cursor, event_id: int, user_id: int):
         cursor.execute(
             """
-            SELECT id, user_id, title, description, amount, category_id, source_id,
+            SELECT id, user_id, title, description, amount, category_id, wallet_id,
                    frequency, repeat_interval, start_date, end_date, occurrence_limit, status
             FROM financial_events
             WHERE id = %s AND user_id = %s AND deleted_at IS NULL
@@ -344,24 +360,39 @@ class CalendarService:
         release_connection(conn)
 
     @staticmethod
-    def get_user_events(user_id: int, include_inactive=False) -> list[dict]:
+    def get_user_events(user_id: int, include_inactive=False, page=1, per_page=20) -> dict:
         conn = get_connection()
         cursor = conn.cursor()
         try:
-            sql = """
-                SELECT id, user_id, title, description, amount, category_id, source_id,
-                       frequency, repeat_interval, start_date, end_date, occurrence_limit, status
-                FROM financial_events
-                WHERE user_id = %s AND deleted_at IS NULL
-            """
+            where_clause = " WHERE user_id = %s AND deleted_at IS NULL"
+            params = [user_id]
             if not include_inactive:
-                sql += " AND status = 'active'"
-            sql += " ORDER BY start_date ASC, id DESC"
-            cursor.execute(sql, (user_id,))
-            return [dict(row) for row in cursor.fetchall()]
+                where_clause += " AND status = 'active'"
+
+            count_sql = "SELECT COUNT(*) as total FROM financial_events" + where_clause
+            cursor.execute(count_sql, params)
+            total = cursor.fetchone()["total"]
+
+            data_sql = (
+                "SELECT id, user_id, title, description, amount, category_id, wallet_id,"
+                " frequency, repeat_interval, start_date, end_date, occurrence_limit, status"
+                " FROM financial_events" + where_clause + " ORDER BY start_date ASC, id DESC"
+            )
+            offset = (page - 1) * per_page
+            cursor.execute(data_sql + " LIMIT %s OFFSET %s", params + [per_page, offset])
+            rows = [dict(row) for row in cursor.fetchall()]
+
+            total_pages = math.ceil(total / per_page) if per_page > 0 else 0
+            return {
+                "items": rows,
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": total_pages,
+            }
         finally:
             cursor.close()
-        release_connection(conn)
+            release_connection(conn)
 
     @staticmethod
     def get_instances(
@@ -369,6 +400,7 @@ class CalendarService:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         include_cancelled: bool = False,
+        wallet_id: Optional[int] = None,
     ) -> list[dict]:
         conn = None
         cursor = None
@@ -385,6 +417,11 @@ class CalendarService:
                 statuses = ("pending", "snoozed", "confirmed", "cancelled", "skipped")
 
             placeholders = ",".join("%s" for _ in statuses)
+            wallet_filter = ""
+            params = [user_id, start_date, end_date, *statuses]
+            if wallet_id is not None:
+                wallet_filter = " AND e.wallet_id = %s"
+                params.append(wallet_id)
             cursor.execute(
                 f"""
                 SELECT
@@ -399,7 +436,7 @@ class CalendarService:
                     e.description,
                     e.amount,
                     e.category_id,
-                    e.source_id,
+                    e.wallet_id,
                     c.name AS category_name,
                     COALESCE(c.type, 'cost') AS category_type
                 FROM financial_event_instances i
@@ -410,10 +447,10 @@ class CalendarService:
                   AND i.due_date <= %s
                   AND i.status IN ({placeholders})
                   AND e.status = 'active'
-                  AND e.deleted_at IS NULL
+                  AND e.deleted_at IS NULL{wallet_filter}
                 ORDER BY i.due_date ASC, i.id ASC
                 """,
-                (user_id, start_date, end_date, *statuses),
+                tuple(params),
             )
             return [
                 {
@@ -428,7 +465,7 @@ class CalendarService:
                     "description": row["description"],
                     "amount": row["amount"],
                     "category_id": row["category_id"],
-                    "source_id": row["source_id"],
+                    "wallet_id": row["wallet_id"],
                     "category_name": row["category_name"],
                     "category_type": row["category_type"],
                 }
@@ -463,7 +500,7 @@ class CalendarService:
                     e.description,
                     e.amount,
                     e.category_id,
-                    e.source_id,
+                    e.wallet_id,
                     c.type AS category_type,
                     c.name AS category_name
                 FROM financial_event_instances i
@@ -487,9 +524,9 @@ class CalendarService:
         try:
             event = CalendarService._fetch_event(cursor, event_id, user_id)
             if event is None:
-                raise ValueError("Event not found")
+                raise ValueError("رویداد یافت نشد")
             if event["status"] == "cancelled":
-                raise ValueError("Cancelled events cannot be modified")
+                raise ValueError("رویدادهای لغو شده قابل ویرایش نیستند")
 
             if CalendarService._has_conflicting_instance(
                 cursor,
@@ -499,12 +536,12 @@ class CalendarService:
                 data.start_date,
                 exclude_event_id=event_id,
             ):
-                raise ValueError("An identical event already exists on the selected date")
+                raise ValueError("رویداد مشابهی قبلاً وجود دارد")
 
             cursor.execute(
                 """
                 UPDATE financial_events
-                SET title = %s, description = %s, amount = %s, category_id = %s, source_id = %s,
+                SET title = %s, description = %s, amount = %s, category_id = %s, wallet_id = %s,
                     frequency = %s, repeat_interval = %s, start_date = %s, end_date = %s, occurrence_limit = %s,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s AND user_id = %s
@@ -514,7 +551,7 @@ class CalendarService:
                     data.description,
                     data.amount,
                     data.category_id,
-                    data.source_id,
+                    data.wallet_id,
                     data.frequency,
                     data.repeat_interval,
                     data.start_date,
@@ -543,7 +580,7 @@ class CalendarService:
                 "description": updated["description"],
                 "amount": updated["amount"],
                 "category_id": updated["category_id"],
-                "source_id": updated["source_id"],
+                "wallet_id": updated["wallet_id"],
                 "frequency": updated["frequency"],
                 "repeat_interval": updated["repeat_interval"],
                 "start_date": updated["start_date"],
@@ -677,20 +714,20 @@ class CalendarService:
         try:
             due = _to_date(new_due_date)
         except ValueError as exc:
-            raise ValueError("new_due_date must be in YYYY-MM-DD format") from exc
+            raise ValueError("تاریخ سررسید جدید باید به فرمت YYYY-MM-DD باشد") from exc
         if due < date.today():
-            raise ValueError("new_due_date must be today or in the future")
+            raise ValueError("تاریخ سررسید جدید باید امروز یا بعد باشد")
 
         conn = get_connection()
         cursor = conn.cursor()
         try:
             instance = CalendarService.get_instance(instance_id, user_id)
             if instance is None:
-                raise ValueError("Instance not found")
+                raise ValueError("نمونه یافت نشد")
             if instance["status"] == "confirmed":
-                raise ValueError("Cannot snooze confirmed instance")
+                raise ValueError("امکان تأخیر نمونه تأیید شده وجود ندارد")
             if instance["status"] == "cancelled":
-                raise ValueError("Cannot snooze cancelled instance")
+                raise ValueError("امکان تأخیر نمونه لغو شده وجود ندارد")
 
             if CalendarService._has_conflicting_instance(
                 cursor,
@@ -699,7 +736,7 @@ class CalendarService:
                 instance["amount"],
                 new_due_date,
             ):
-                raise ValueError("An identical event already exists on the selected date")
+                raise ValueError("رویداد مشابهی قبلاً وجود دارد")
 
             cursor.execute(
                 """
@@ -752,7 +789,7 @@ class CalendarService:
                     e.title,
                     e.amount,
                     e.category_id,
-                    e.source_id,
+                    e.wallet_id,
                     c.type AS category_type
                 FROM financial_event_instances i
                 JOIN financial_events e ON e.id = i.event_id
@@ -763,25 +800,19 @@ class CalendarService:
             )
             row = cursor.fetchone()
             if row is None:
-                raise ValueError("Instance not found or already paid")
+                raise ValueError("نمونه یافت نشد یا قبلاً پرداخت شده است")
 
             if row["status"] not in ("pending", "snoozed"):
-                raise ValueError("Only pending/snoozed instances can be confirmed")
+                raise ValueError("فقط نمونه‌های در انتظار یا با تأخیر قابل تأیید هستند")
 
-            if row["category_type"] == "cost" and row["source_id"] is not None:
-                cursor.execute(
-                    "SELECT amount FROM sources WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
-                    (row["source_id"], user_id),
-                )
-                source = cursor.fetchone()
-                if source is None:
-                    raise ValueError("Source not found")
-                if float(source["amount"] or 0) < float(row["amount"]):
-                    raise ValueError("Insufficient source balance")
+            if row["category_type"] == "cost" and row["wallet_id"] is not None:
+                balance = get_wallet_balance(cursor, row["wallet_id"], user_id)
+                if balance < to_decimal(row["amount"]):
+                    raise ValueError("موجودی کیف پول کافی نیست")
 
             cursor.execute(
                 """
-                INSERT INTO transactions (user_id, date, amount, category_id, source_id, description)
+                INSERT INTO transactions (user_id, date, amount, category_id, wallet_id, description)
                 VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
                 """,
                 (
@@ -789,22 +820,22 @@ class CalendarService:
                     row["due_date"],
                     row["amount"],
                     row["category_id"],
-                    row["source_id"],
+                    row["wallet_id"],
                     f"{row['title']} (Paid via calendar)",
                 ),
             )
             tx_id = cursor.fetchone()['id']
 
-            if row["source_id"] is not None:
+            if row["wallet_id"] is not None:
                 cursor.execute(
                     """
-                    UPDATE sources
+                    UPDATE wallets
                     SET amount = amount + %s
                     WHERE id = %s AND user_id = %s
                     """,
                     (
                         row["amount"] if row["category_type"] == "income" else -row["amount"],
-                        row["source_id"],
+                        row["wallet_id"],
                         user_id,
                     ),
                 )

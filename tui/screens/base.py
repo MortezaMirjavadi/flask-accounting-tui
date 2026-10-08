@@ -9,7 +9,7 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, DataTable, Digits, Footer, Header, Input, Label, Rule, Select, Static
 
-from tui.api import api_get, api_delete, handle_response, format_toman
+from tui.api import api_get, api_delete, extract_items, handle_response, format_toman
 from tui.widgets import ConfirmBox, HelpTip, MessageBox, StatusBar
 
 
@@ -70,18 +70,23 @@ class BaseListScreen(Screen):
         table.zebra_stripes = True
         self.load_data()
 
+    @staticmethod
+    def _extract_items(data):
+        """Extract list items from either a plain list or a paginated response dict."""
+        return extract_items(data)
+
     def load_data(self, params=None):
         table = self.query_one("#data_table", DataTable)
         table.clear()
-        
+
         resp = api_get(self.api_endpoint, params=params, username=self.app.user.get("username"))
         data, err = handle_response(resp)
-        
+
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
-        
-        self._data = data or []
+
+        self._data = extract_items(data)
         self.populate_table(table)
         self.update_detail()
 
@@ -176,11 +181,11 @@ class BaseListScreen(Screen):
 
 
 class DashboardScreen(Screen):
-    """Home dashboard showing sources and today's transactions."""
+    """Home dashboard showing wallets and today's transactions."""
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
-        Binding("a", "add_source", "Add Source"),
+        Binding("a", "add_wallet", "Add Wallet"),
         Binding("t", "add_transaction", "Add Transaction"),
     ]
 
@@ -230,7 +235,7 @@ class DashboardScreen(Screen):
         padding: 0 0 0 1;
     }
 
-    #sources-table {
+    #wallets-table {
         width: 100%;
         height: 1fr;
         min-height: 5;
@@ -278,7 +283,7 @@ class DashboardScreen(Screen):
         margin: 0;
     }
 
-    #sources-count {
+    #wallets-count {
         width: 100%;
         height: auto;
         text-align: center;
@@ -372,20 +377,20 @@ class DashboardScreen(Screen):
             # Left panel — Sources
             with Vertical(id="dash-left"):
                 with Horizontal(classes="dash-btn-row"):
-                    yield Label("Sources", classes="dash-section-title")
-                    yield Button("Add Source", variant="error", id="btn-add-source")
+                    yield Label("Wallets", classes="dash-section-title")
+                    yield Button("➕ Wallet", variant="error", id="btn-add-wallet")
                 with Vertical(id="balance-container"):
                     yield Label("Total Balance", id="balance-label")
                     yield Digits("0", id="balance-digits")
                     yield Static("Toman", id="balance-unit")
-                    yield Static("Loading...", id="sources-count")
-                yield DataTable(id="sources-table")
+                    yield Static("Loading...", id="wallets-count")
+                yield DataTable(id="wallets-table")
 
             # Right panel — Today's Transactions
             with Vertical(id="dash-right"):
                 with Horizontal(classes="dash-btn-row"):
                     yield Label("Today's Transactions", classes="dash-section-title")
-                    yield Button("Add Transaction", variant="error", id="btn-add-tx")
+                    yield Button("➕ Transaction", variant="error", id="btn-add-tx")
                 with Horizontal(id="tx-summary-row"):
                     with Vertical(classes="tx-metric"):
                         yield Label("Income", classes="tx-metric-label")
@@ -404,7 +409,7 @@ class DashboardScreen(Screen):
         yield Static("", id="dash-bottom")
 
     def on_mount(self) -> None:
-        src_table = self.query_one("#sources-table", DataTable)
+        src_table = self.query_one("#wallets-table", DataTable)
         src_table.add_columns("ID", "Name", "Amount")
         src_table.cursor_type = "row"
         src_table.zebra_stripes = True
@@ -414,16 +419,23 @@ class DashboardScreen(Screen):
         tx_table.cursor_type = "row"
         tx_table.zebra_stripes = True
 
-        self.load_sources()
+        self.load_wallets()
         self.load_today_transactions()
 
-    def load_sources(self):
-        src_table = self.query_one("#sources-table", DataTable)
+    @staticmethod
+    def _extract_items(data):
+        """Extract list items from either a plain list or a paginated response dict."""
+        if isinstance(data, dict) and "items" in data:
+            return data["items"] or []
+        return data or []
+
+    def load_wallets(self):
+        src_table = self.query_one("#wallets-table", DataTable)
         src_table.clear()
         digits = self.query_one("#balance-digits", Digits)
-        count_label = self.query_one("#sources-count", Static)
+        count_label = self.query_one("#wallets-count", Static)
 
-        resp = api_get("/sources", username=self.app.user.get("username"))
+        resp = api_get("/wallets", username=self.app.user.get("username"))
         data, err = handle_response(resp)
 
         if err:
@@ -431,20 +443,20 @@ class DashboardScreen(Screen):
             count_label.update(f"[red]Error: {err}[/red]")
             return
 
-        self._sources = data or []
-        if not self._sources:
+        self._wallets = self._extract_items(data)
+        if not self._wallets:
             digits.update("0")
-            count_label.update("[dim]No sources found[/dim]")
+            count_label.update("[dim]No wallets found[/dim]")
             return
 
-        total = sum(float(s.get("amount", 0)) for s in self._sources)
+        total = sum(float(s.get("amount", 0)) for s in self._wallets)
         rows = [
             (str(s["id"]), s["name"], format_toman(s.get("amount", 0)))
-            for s in self._sources
+            for s in self._wallets
         ]
         src_table.add_rows(rows)
         digits.update(f"{total:,.0f}")
-        count_label.update(f"[b]Sources:[/b]  {len(self._sources)}")
+        count_label.update(f"[b]Sources:[/b]  {len(self._wallets)}")
 
     def load_today_transactions(self):
         tx_table = self.query_one("#tx-table", DataTable)
@@ -472,7 +484,61 @@ class DashboardScreen(Screen):
             count_label.update(f"[red]Error: {err}[/red]")
             return
 
-        self._today_txs = data or []
+        self._today_txs = self._extract_items(data)
+        if not self._today_txs:
+            income_digits.update("0")
+            cost_digits.update("0")
+            net_digits.update("0")
+            count_label.update(f"[dim]No transactions today ({today_str})[/dim]")
+            return
+
+        total_income = 0.0
+        total_cost = 0.0
+        rows = []
+        for t in self._today_txs:
+            amount = float(t.get("amount", 0))
+            cat_type = t.get("category_type", "")
+            if cat_type == "income" or t.get("is_transfer"):
+                total_income += amount
+            else:
+                total_cost += amount
+
+            desc = t.get("description") or t.get("category_name") or "-"
+            rows.append((t.get("date", ""), desc[:30], format_toman(amount)))
+
+        tx_table.add_rows(rows)
+        net = total_income - total_cost
+        income_digits.update(f"{total_income:,.0f}")
+        cost_digits.update(f"{total_cost:,.0f}")
+        net_digits.update(f"{net:,.0f}")
+        count_label.update(f"[dim]{len(self._today_txs)} transactions today[/dim]")
+
+        tx_table = self.query_one("#tx-table", DataTable)
+        tx_table.clear()
+        income_digits = self.query_one("#tx-income", Digits)
+        cost_digits = self.query_one("#tx-cost", Digits)
+        net_digits = self.query_one("#tx-net", Digits)
+        count_label = self.query_one("#tx-count", Static)
+
+        now = datetime.now()
+        jalali_now = jdatetime.datetime.fromgregorian(datetime=now)
+        today_str = jalali_now.strftime("%Y-%m-%d")
+
+        resp = api_get(
+            "/transactions",
+            params={"date_from": today_str, "date_to": today_str, "include_transfers": 1},
+            username=self.app.user.get("username"),
+        )
+        data, err = handle_response(resp)
+
+        if err:
+            income_digits.update("0")
+            cost_digits.update("0")
+            net_digits.update("0")
+            count_label.update(f"[red]Error: {err}[/red]")
+            return
+
+        self._today_txs = extract_items(data)
         if not self._today_txs:
             income_digits.update("0")
             cost_digits.update("0")
@@ -503,22 +569,22 @@ class DashboardScreen(Screen):
 
     def load_data(self):
         """Refresh all dashboard data from the API."""
-        self.load_sources()
+        self.load_wallets()
         self.load_today_transactions()
 
     def action_refresh(self):
         self.load_data()
 
-    def action_add_source(self):
-        from tui.screens.sources import SourceAddScreen
-        self.app.push_screen(SourceAddScreen())
+    def action_add_wallet(self):
+        from tui.screens.wallets import WalletAddScreen
+        self.app.push_screen(WalletAddScreen())
 
     def action_add_transaction(self):
         from tui.screens.transactions import TransactionAddScreen
         self.app.push_screen(TransactionAddScreen())
 
     def on_button_pressed(self, event: Button.Pressed):
-        if event.button.id == "btn-add-source":
-            self.action_add_source()
+        if event.button.id == "btn-add-wallet":
+            self.action_add_wallet()
         elif event.button.id == "btn-add-tx":
             self.action_add_transaction()

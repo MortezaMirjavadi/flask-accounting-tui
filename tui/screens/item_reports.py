@@ -6,7 +6,7 @@ from textual.containers import Container, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Label, ListItem, ListView, Rule, Static
 
-from tui.api import api_get, format_toman, handle_response
+from tui.api import api_get, format_toman, extract_items, handle_response
 from tui.widgets import HelpTip, StatusBar
 
 
@@ -181,7 +181,7 @@ class ItemReportViewScreen(Screen):
             f"{'Item':<20} {'Qty':>8} {'Spent':>15} {'Count':>7} {'Avg Price':>14} {'Last Price':>14}"
         )
         lines.append("\u2500" * w)
-        for item in data:
+        for item in extract_items(data):
             name = (item["item_name"] or "")[:20]
             lines.append(
                 f"{name:<20} "
@@ -215,7 +215,7 @@ class ItemReportViewScreen(Screen):
             f"{'Item':<20} {'Count':>6} {'Avg Days':>9} {'Last Purchased':>16} {'Next Predicted':>16} {'Monthly Est':>14}"
         )
         lines.append("\u2500" * w)
-        for item in data:
+        for item in extract_items(data):
             name = (item["item_name"] or "")[:20]
             avg_days = f"{item['avg_days_between']:.1f}" if item["avg_days_between"] else "-"
             predicted = item.get("predicted_next_date") or "-"
@@ -228,7 +228,7 @@ class ItemReportViewScreen(Screen):
                 f"{format_toman(item['monthly_estimated_cost']):>14}"
             )
         lines.append("\u2500" * w)
-        total_monthly = sum(i["monthly_estimated_cost"] for i in data)
+        total_monthly = sum(i["monthly_estimated_cost"] for i in extract_items(data))
         lines.append(f"Estimated monthly recurring cost: {format_toman(total_monthly)}")
         self._show_report(lines)
 
@@ -314,15 +314,15 @@ class ItemReportViewScreen(Screen):
         lines.append("\u2500" * w)
 
         current_item = None
-        for row in data:
+        for row in extract_items(data):
             name = (row["item_name"] or "")[:20]
-            source = (row["source_name"] or "")[:16]
+            wallet = (row["wallet_name"] or "")[:16]
             if current_item and current_item != name:
                 lines.append("\u2500" * w)
             current_item = name
             lines.append(
                 f"{name:<20} "
-                f"{source:<16} "
+                f"{wallet:<16} "
                 f"{format_toman(row['avg_price']):>12} "
                 f"{format_toman(row['min_price']):>12} "
                 f"{format_toman(row['max_price']):>12} "
@@ -351,7 +351,7 @@ class ItemReportViewScreen(Screen):
             f"{'Item':<20} {'Average':>14} {'Latest':>14} {'Date':>12} {'Change':>10}"
         )
         lines.append("\u2500" * w)
-        for s in data:
+        for s in extract_items(data):
             name = (s["item_name"] or "")[:20]
             pct = s["change_pct"] * 100
             lines.append(
@@ -384,7 +384,7 @@ class ItemReportViewScreen(Screen):
 
         current_month = None
         month_total = 0
-        for row in data:
+        for row in extract_items(data):
             month = row["month"]
             if month != current_month:
                 if current_month is not None:
@@ -428,12 +428,12 @@ class ItemReportViewScreen(Screen):
         lines.append("\u2500" * w)
         lines.append(f"{'Item':<20} {'Best Store':<16} {'Avg Price':>14} {'Visits':>8}")
         lines.append("\u2500" * w)
-        for row in data:
+        for row in extract_items(data):
             name = (row["item_name"] or "")[:20]
-            source = (row["best_source"] or "")[:16]
+            wallet = (row["best_wallet"] or "")[:16]
             lines.append(
                 f"{name:<20} "
-                f"{source:<16} "
+                f"{wallet:<16} "
                 f"{format_toman(row['avg_price']):>14} "
                 f"{row['purchase_count']:>8}"
             )

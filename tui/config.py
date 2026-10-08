@@ -2,7 +2,7 @@
 
 import os
 
-BASE_URL = os.environ.get("BASE_URL", "http://127.0.0.1:5000")
+BASE_URL = os.environ.get("BASE_URL", "http://127.0.0.1:5000/api")
 
 # Persian month names mapping
 PERSIAN_MONTHS = [

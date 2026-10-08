@@ -10,8 +10,23 @@ class Config:
     DB_NAME = os.environ.get('DB_NAME', 'terminal_accounting')
     DB_USER = os.environ.get('DB_USER', 'postgres')
     DB_PASSWORD = os.environ.get('DB_PASSWORD', '')
-    
-    # Add other configuration as needed
+
+    # Swagger / OpenAPI configuration
+    SWAGGER = {
+        "title": "Terminal Accounting API",
+        "version": "1.0.0",
+        "description": "Personal accounting & financial management REST API",
+        "uiversion": 3,
+        "specs_route": "/apidocs/",
+        "securityDefinitions": {
+            "X-Username": {
+                "type": "apiKey",
+                "name": "X-Username",
+                "in": "header",
+                "description": "Username for authenticated requests",
+            }
+        },
+    }
 
 
 class DevelopmentConfig(Config):

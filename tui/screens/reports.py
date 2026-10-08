@@ -9,7 +9,8 @@ from textual.containers import Container, Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 
-from tui.api import api_get, format_toman, handle_response
+
+from tui.api import api_get, format_toman, extract_items, handle_response
 from tui.widgets import HelpTip, MessageBox, StatusBar
 
 
@@ -122,7 +123,7 @@ class AdvancedReportScreen(Screen):
             self.app.push_screen(MessageBox(err, "Error"))
             return
 
-        self._report_data = data
+        self._report_data = extract_items(data)
         self.render_report()
 
     def render_report(self):
@@ -243,7 +244,7 @@ class AdvancedReportScreen(Screen):
         budget_health = data.get("budget_health", {})
         trend = data.get("trend_analysis", {})
         velocity = data.get("spending_velocity", {})
-        sources = data.get("source_health", [])
+        wallets = data.get("wallet_health", [])
         insights = data.get("smart_insights", [])
 
         if self._filter_text:
@@ -289,14 +290,14 @@ class AdvancedReportScreen(Screen):
                 self._make_row(f" Forecast:      {format_toman(velocity.get('forecast', 0))}", width),
                 self._make_row(f" Overrun Risk:  {format_toman(velocity.get('predicted_budget_overrun_amount', 0))}", width),
                 "├────────────────────────────────────────────────────────────┤",
-                self._make_row(" Source Health", width),
+                self._make_row(" Wallet Health", width),
                 self._make_row("-" * (width - 2), width),
             ]
         )
         
-        for row in sources[:5]:
-            source_str = f" {row.get('source_name', '-')[:12]:<12} Δ {format_toman(row.get('balance_change', 0))}"
-            lines.append(self._make_row(source_str, width))
+        for row in wallets[:5]:
+            wallet_str = f" {row.get('wallet_name', '-')[:12]:<12} Δ {format_toman(row.get('balance_change', 0))}"
+            lines.append(self._make_row(wallet_str, width))
             
         lines.append("├────────────────────────────────────────────────────────────┤")
         lines.append(self._make_row(" Smart Insights", width))

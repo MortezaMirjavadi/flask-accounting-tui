@@ -1,6 +1,13 @@
 """API utility functions."""
 
 
+def extract_items(data):
+    """Extract list items from either a plain list or a paginated response dict."""
+    if isinstance(data, dict) and "items" in data:
+        return data["items"] or []
+    return data or []
+
+
 def format_toman(amount):
     """Format a number as Toman (Persian currency)."""
     try:

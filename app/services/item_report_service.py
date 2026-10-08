@@ -7,6 +7,17 @@ from typing import Optional
 from database import get_connection, release_connection
 
 
+# SQL fragment for checking transaction access via wallet ownership or membership.
+# Each query that uses this needs 3 user_id params: (user_id, user_id, user_id).
+_TX_ACCESS_WHERE = (
+    "((t.wallet_id IS NULL AND t.user_id = %s) "
+    "OR t.wallet_id IN ("
+    "SELECT id FROM wallets WHERE user_id = %s AND deleted_at IS NULL "
+    "UNION "
+    "SELECT wallet_id FROM wallet_members WHERE user_id = %s))"
+)
+
+
 # ── Data models ───────────────────────────────────────────────────────
 
 @dataclass
@@ -92,7 +103,7 @@ class ItemReportService:
         conn = get_connection()
         cursor = conn.cursor()
         try:
-            query = """
+            query = f"""
                 SELECT
                     ti.name AS item_name,
                     SUM(ti.quantity)::numeric(12,2) AS total_quantity,
@@ -102,11 +113,11 @@ class ItemReportService:
                     (ARRAY_AGG(ti.total_price ORDER BY t.date DESC))[1]::numeric(15,2) AS last_price
                 FROM transaction_items ti
                 JOIN transactions t ON ti.transaction_id = t.id
-                WHERE t.user_id = %s
+                WHERE {_TX_ACCESS_WHERE}
                   AND ti.deleted_at IS NULL
                   AND t.deleted_at IS NULL
             """
-            params = [user_id]
+            params = [user_id, user_id, user_id]
 
             if date_from:
                 query += " AND t.date >= %s"
@@ -147,21 +158,21 @@ class ItemReportService:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                """
+                f"""
                 SELECT
                     t.date::text AS date,
                     ti.total_price::numeric(15,2) AS price,
                     ti.quantity::numeric(10,2) AS quantity
                 FROM transaction_items ti
                 JOIN transactions t ON ti.transaction_id = t.id
-                WHERE t.user_id = %s
+                WHERE {_TX_ACCESS_WHERE}
                   AND ti.deleted_at IS NULL
                   AND t.deleted_at IS NULL
                   AND ti.name = %s
                 ORDER BY t.date DESC
                 LIMIT %s
                 """,
-                (user_id, item_name, limit),
+                (user_id, user_id, user_id, item_name, limit),
             )
             results = []
             for r in cursor.fetchall():
@@ -184,7 +195,7 @@ class ItemReportService:
         try:
             cutoff = date.today() - timedelta(days=months * 30)
             cursor.execute(
-                """
+                f"""
                 SELECT
                     TO_CHAR(t.date, 'YYYY-MM') AS month,
                     ti.name AS item_name,
@@ -193,14 +204,14 @@ class ItemReportService:
                     SUM(ti.total_price)::numeric(15,2) AS monthly_cost
                 FROM transaction_items ti
                 JOIN transactions t ON ti.transaction_id = t.id
-                WHERE t.user_id = %s
+                WHERE {_TX_ACCESS_WHERE}
                   AND ti.deleted_at IS NULL
                   AND t.deleted_at IS NULL
                   AND t.date >= %s
                 GROUP BY TO_CHAR(t.date, 'YYYY-MM'), ti.name
                 ORDER BY month DESC, monthly_cost DESC
                 """,
-                (user_id, cutoff),
+                (user_id, user_id, user_id, cutoff),
             )
             results = []
             for r in cursor.fetchall():
@@ -224,7 +235,7 @@ class ItemReportService:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                """
+                f"""
                 SELECT
                     ti.name AS item_name,
                     COALESCE(c.name, 'Unknown') AS category_name,
@@ -233,14 +244,14 @@ class ItemReportService:
                 FROM transaction_items ti
                 JOIN transactions t ON ti.transaction_id = t.id
                 LEFT JOIN categories c ON t.category_id = c.id
-                WHERE t.user_id = %s
+                WHERE {_TX_ACCESS_WHERE}
                   AND ti.deleted_at IS NULL
                   AND t.deleted_at IS NULL
                 GROUP BY ti.name, c.name
                 ORDER BY total_spent DESC
                 LIMIT %s
                 """,
-                (user_id, limit),
+                (user_id, user_id, user_id, limit),
             )
             results = []
             for r in cursor.fetchall():
@@ -264,7 +275,7 @@ class ItemReportService:
         try:
             # Find recurring items with enough purchase history
             cursor.execute(
-                """
+                f"""
                 WITH item_dates AS (
                     SELECT
                         ti.name,
@@ -273,7 +284,7 @@ class ItemReportService:
                         LAG(t.date) OVER (PARTITION BY ti.name ORDER BY t.date) AS prev_date
                     FROM transaction_items ti
                     JOIN transactions t ON ti.transaction_id = t.id
-                    WHERE t.user_id = %s
+                    WHERE {_TX_ACCESS_WHERE}
                       AND ti.deleted_at IS NULL
                       AND t.deleted_at IS NULL
                 ),
@@ -301,7 +312,7 @@ class ItemReportService:
                 FROM item_stats
                 ORDER BY purchase_count DESC
                 """,
-                (user_id, min_purchases),
+                (user_id, user_id, user_id, min_purchases),
             )
             results = []
             for r in cursor.fetchall():
@@ -333,36 +344,36 @@ class ItemReportService:
             cursor.close()
             release_connection(conn)
 
-    # ── Report 6: Source-based Price Comparison ───────────────────
+    # ── Report 6: Wallet-based Price Comparison ───────────────────
 
     @staticmethod
-    def get_source_prices(user_id, item_name=None):
+    def get_wallet_prices(user_id, item_name=None):
         conn = get_connection()
         cursor = conn.cursor()
         try:
-            query = """
+            query = f"""
                 SELECT
                     ti.name AS item_name,
-                    COALESCE(s.name, '-') AS source_name,
+                    COALESCE(w.name, '-') AS source_name,
                     AVG(ti.total_price / NULLIF(ti.quantity, 0))::numeric(15,2) AS avg_price,
                     MIN(ti.total_price / NULLIF(ti.quantity, 0))::numeric(15,2) AS min_price,
                     MAX(ti.total_price / NULLIF(ti.quantity, 0))::numeric(15,2) AS max_price,
                     COUNT(*)::int AS purchase_count
                 FROM transaction_items ti
                 JOIN transactions t ON ti.transaction_id = t.id
-                LEFT JOIN sources s ON t.source_id = s.id
-                WHERE t.user_id = %s
+                LEFT JOIN wallets w ON t.wallet_id = w.id
+                WHERE {_TX_ACCESS_WHERE}
                   AND ti.deleted_at IS NULL
                   AND t.deleted_at IS NULL
             """
-            params = [user_id]
+            params = [user_id, user_id, user_id]
 
             if item_name:
                 query += " AND ti.name = %s"
                 params.append(item_name)
 
             query += """
-                GROUP BY ti.name, s.name
+                GROUP BY ti.name, w.name
                 HAVING COUNT(*) >= 1
                 ORDER BY ti.name, avg_price
             """
@@ -401,18 +412,18 @@ class ItemReportService:
             # Determine the period boundaries
             cutoff = date.today() - timedelta(days=period_months * 30)
             cursor.execute(
-                """
+                f"""
                 SELECT
                     MIN(DATE_TRUNC('month', t.date))::date AS period_start,
                     MAX(DATE_TRUNC('month', t.date))::date AS period_end
                 FROM transaction_items ti
                 JOIN transactions t ON ti.transaction_id = t.id
-                WHERE t.user_id = %s
+                WHERE {_TX_ACCESS_WHERE}
                   AND ti.deleted_at IS NULL
                   AND t.deleted_at IS NULL
                   AND t.date >= %s
                 """,
-                (user_id, cutoff),
+                (user_id, user_id, user_id, cutoff),
             )
             period_row = cursor.fetchone()
             if not period_row or not period_row["period_start"]:
@@ -428,7 +439,7 @@ class ItemReportService:
 
             # Get item prices in T0 (first month) and T1 (last month)
             cursor.execute(
-                """
+                f"""
                 WITH monthly_prices AS (
                     SELECT
                         ti.name,
@@ -438,7 +449,7 @@ class ItemReportService:
                         COUNT(*)::int AS cnt
                     FROM transaction_items ti
                     JOIN transactions t ON ti.transaction_id = t.id
-                    WHERE t.user_id = %s
+                    WHERE {_TX_ACCESS_WHERE}
                       AND ti.deleted_at IS NULL
                       AND t.deleted_at IS NULL
                       AND t.date >= %s
@@ -470,7 +481,7 @@ class ItemReportService:
                 WHERE t0.cnt >= %s AND t1.cnt >= %s
                 ORDER BY inflation_rate DESC
                 """,
-                (user_id, period_start, period_end_plus,
+                (user_id, user_id, user_id, period_start, period_end_plus,
                  period_start, period_end,
                  min_purchases, min_purchases),
             )
@@ -524,7 +535,7 @@ class ItemReportService:
         try:
             cutoff = date.today() - timedelta(days=lookback_months * 30)
             cursor.execute(
-                """
+                f"""
                 WITH recent_prices AS (
                     SELECT
                         ti.name,
@@ -533,7 +544,7 @@ class ItemReportService:
                         ROW_NUMBER() OVER (PARTITION BY ti.name ORDER BY t.date DESC) AS rn
                     FROM transaction_items ti
                     JOIN transactions t ON ti.transaction_id = t.id
-                    WHERE t.user_id = %s
+                    WHERE {_TX_ACCESS_WHERE}
                       AND ti.deleted_at IS NULL
                       AND t.deleted_at IS NULL
                       AND t.date >= %s
@@ -563,7 +574,7 @@ class ItemReportService:
                 WHERE lp.latest_price > ia.avg_price * (1 + %s)
                 ORDER BY change_pct DESC
                 """,
-                (user_id, cutoff, threshold),
+                (user_id, user_id, user_id, cutoff, threshold),
             )
             results = []
             for r in cursor.fetchall():
@@ -583,25 +594,25 @@ class ItemReportService:
 
     @staticmethod
     def get_best_stores(user_id, limit=20):
-        """For each item, find the source with the lowest average price."""
+        """For each item, find the wallet with the lowest average price."""
         conn = get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute(
-                """
-                WITH source_prices AS (
+                f"""
+                WITH wallet_prices AS (
                     SELECT
                         ti.name AS item_name,
-                        COALESCE(s.name, '-') AS source_name,
+                        COALESCE(w.name, '-') AS source_name,
                         AVG(ti.total_price / NULLIF(ti.quantity, 0))::numeric(15,2) AS avg_price,
                         COUNT(*)::int AS purchase_count
                     FROM transaction_items ti
                     JOIN transactions t ON ti.transaction_id = t.id
-                    LEFT JOIN sources s ON t.source_id = s.id
-                    WHERE t.user_id = %s
+                    LEFT JOIN wallets w ON t.wallet_id = w.id
+                    WHERE {_TX_ACCESS_WHERE}
                       AND ti.deleted_at IS NULL
                       AND t.deleted_at IS NULL
-                    GROUP BY ti.name, s.name
+                    GROUP BY ti.name, w.name
                     HAVING COUNT(*) >= 1
                 ),
                 ranked AS (
@@ -611,7 +622,7 @@ class ItemReportService:
                         avg_price,
                         purchase_count,
                         ROW_NUMBER() OVER (PARTITION BY item_name ORDER BY avg_price) AS rn
-                    FROM source_prices
+                    FROM wallet_prices
                 )
                 SELECT item_name, source_name, avg_price, purchase_count
                 FROM ranked
@@ -619,7 +630,7 @@ class ItemReportService:
                 ORDER BY item_name
                 LIMIT %s
                 """,
-                (user_id, limit),
+                (user_id, user_id, user_id, limit),
             )
             results = []
             for r in cursor.fetchall():

@@ -5,6 +5,7 @@ from app.models import (
     validate_installment_plan_payload,
 )
 from app.utils.helpers import get_user_id_from_request
+from app.utils.pagination import parse_pagination
 from services.installment_service import InstallmentService
 
 bp = Blueprint('installments', __name__)
@@ -12,20 +13,69 @@ bp = Blueprint('installments', __name__)
 
 @bp.route("/plans", methods=["GET"])
 def list_installment_plans():
+    """List installment plans.
+    ---
+    tags:
+      - Installments
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: page
+        in: query
+        type: integer
+        default: 1
+      - name: per_page
+        in: query
+        type: integer
+        default: 20
+      - name: status
+        in: query
+        type: string
+      - name: wallet_id
+        in: query
+        type: integer
+    responses:
+      200:
+        description: Paginated list of installment plans
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
 
+    page, per_page = parse_pagination()
     status = request.args.get("status", "").strip().lower()
+    wallet_id = request.args.get("wallet_id", type=int)
     try:
-        plans = InstallmentService.list_installment_plans(user_id, status=status or None)
+        result = InstallmentService.list_installment_plans(user_id, status=status or None, wallet_id=wallet_id, page=page, per_page=per_page)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify(plans)
+    return jsonify(result)
 
 
 @bp.route("/plans", methods=["POST"])
 def create_plan():
+    """Create an installment plan.
+    ---
+    tags:
+      - Installments
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+    responses:
+      201:
+        description: Installment plan created
+      400:
+        description: Validation error
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -44,6 +94,25 @@ def create_plan():
 
 @bp.route("/plans/<int:plan_id>", methods=["GET"])
 def get_plan(plan_id):
+    """Get installment plan details.
+    ---
+    tags:
+      - Installments
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: plan_id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: Installment plan details
+      404:
+        description: Plan not found
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -57,6 +126,23 @@ def get_plan(plan_id):
 
 @bp.route("/plans/<int:plan_id>/generate", methods=["POST"])
 def regenerate_plan_installments(plan_id):
+    """Regenerate installments for a plan.
+    ---
+    tags:
+      - Installments
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: plan_id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: Regenerated installments list
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -69,6 +155,25 @@ def regenerate_plan_installments(plan_id):
 
 @bp.route("/plans/<int:plan_id>/cancel", methods=["POST"])
 def cancel_plan(plan_id):
+    """Cancel an installment plan.
+    ---
+    tags:
+      - Installments
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: plan_id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: Plan canceled
+      404:
+        description: Plan not found or cannot be canceled
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -82,6 +187,33 @@ def cancel_plan(plan_id):
 
 @bp.route("/pay", methods=["POST"])
 def pay_installments():
+    """Mark installments as paid.
+    ---
+    tags:
+      - Installments
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          properties:
+            installment_ids:
+              type: array
+              items:
+                type: integer
+            paid_date:
+              type: string
+    responses:
+      200:
+        description: Installments marked as paid
+      400:
+        description: Validation error
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -105,6 +237,33 @@ def pay_installments():
 
 @bp.route("/<int:installment_id>/due-date", methods=["PUT"])
 def change_installment_due_date(installment_id):
+    """Change an installment's due date.
+    ---
+    tags:
+      - Installments
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: installment_id
+        in: path
+        type: integer
+        required: true
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          properties:
+            due_date:
+              type: string
+    responses:
+      200:
+        description: Due date updated
+      400:
+        description: Validation error
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -124,6 +283,23 @@ def change_installment_due_date(installment_id):
 
 @bp.route("/upcoming", methods=["GET"])
 def upcoming_installments():
+    """List upcoming installments.
+    ---
+    tags:
+      - Installments
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+      - name: days
+        in: query
+        type: integer
+        default: 30
+    responses:
+      200:
+        description: List of upcoming installments
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -136,6 +312,19 @@ def upcoming_installments():
 
 @bp.route("/overdue", methods=["GET"])
 def overdue_installments():
+    """List overdue installments.
+    ---
+    tags:
+      - Installments
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+    responses:
+      200:
+        description: List of overdue installments
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err
@@ -147,6 +336,19 @@ def overdue_installments():
 
 @bp.route("/debt", methods=["GET"])
 def remaining_debt():
+    """Get remaining installment debt summary.
+    ---
+    tags:
+      - Installments
+    parameters:
+      - name: X-Username
+        in: header
+        type: string
+        required: true
+    responses:
+      200:
+        description: Remaining installment debt summary
+    """
     user_id, err = get_user_id_from_request()
     if err:
         return err

@@ -1,21 +1,21 @@
-"""Category management screens."""
+"""Category management screens with tree support."""
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import (
-    Button, DataTable, Footer, Header, Input, Label, 
+    Button, DataTable, Footer, Header, Input, Label,
     ListItem, ListView, Select, Static, Rule
 )
 
-from tui.api import api_get, api_post, api_put, api_delete, handle_response
+from tui.api import api_get, api_post, api_put, api_delete, extract_items, handle_response
 from tui.widgets import ConfirmBox, HelpTip, MessageBox, StatusBar
 
 
 class CategoriesScreen(Screen):
     """Categories menu."""
-    
+
     BINDINGS = [
         Binding("escape", "go_back", "Back"),
         Binding("1", "do_list", "List"),
@@ -60,8 +60,8 @@ class CategoriesScreen(Screen):
 
 
 class CategoryListScreen(Screen):
-    """Category list with filtering."""
-    
+    """Category list with tree-aware filtering."""
+
     BINDINGS = [
         Binding("escape", "go_back", "Back"),
         Binding("e", "edit_selected", "Edit"),
@@ -83,8 +83,8 @@ class CategoryListScreen(Screen):
                     prompt="Filter by type",
                     id="cat_filter_type",
                 )
-                yield Button("Filter", variant="primary", id="cat_filter_btn")
-                yield Button("Reset", variant="default", id="cat_reset_btn")
+                yield Button("🔍 Filter", variant="primary", id="cat_filter_btn")
+                yield Button("🔄 Reset", variant="default", id="cat_reset_btn")
             with Horizontal(classes="split_row"):
                 with Vertical(classes="left_pane"):
                     yield DataTable(id="cat_table")
@@ -100,7 +100,7 @@ class CategoryListScreen(Screen):
 
     def on_mount(self) -> None:
         table = self.query_one("#cat_table", DataTable)
-        table.add_columns("ID", "Name", "Type")
+        table.add_columns("ID", "Name", "Type", "Parent")
         table.cursor_type = "row"
         table.zebra_stripes = True
         self.load_data()
@@ -108,16 +108,25 @@ class CategoryListScreen(Screen):
     def load_data(self, params=None):
         table = self.query_one("#cat_table", DataTable)
         table.clear()
+        # Use flat mode to get parent_name in each row
         resp = api_get("/categories", params=params, username=self.app.user.get("username"))
         data, err = handle_response(resp)
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
-        self._data = data or []
+        self._data = extract_items(data)
         if not self._data:
-            table.add_row("-", "No categories found", "-")
+            table.add_row("-", "No categories found", "-", "-")
         else:
-            rows = [(str(c["id"]), c["name"], c["type"]) for c in self._data]
+            rows = [
+                (
+                    str(c.get("id")),
+                    c.get("name", ""),
+                    c.get("type", ""),
+                    c.get("parent_name") or "-",
+                )
+                for c in self._data
+            ]
             table.add_rows(rows)
         self.update_detail()
 
@@ -151,14 +160,16 @@ class CategoryListScreen(Screen):
         if cat_id is None:
             detail.update("Select a category to see details.")
             return
-        cat = next((c for c in getattr(self, "_data", []) if c["id"] == cat_id), None)
+        cat = next((c for c in getattr(self, "_data", []) if c.get("id") == cat_id), None)
         if cat is None:
             detail.update("Select a category to see details.")
             return
+        parent = cat.get("parent_name") or "Root"
         detail.update(
             f"[b]ID:[/b]        {cat['id']}\n"
             f"[b]Name:[/b]      {cat['name']}\n"
             f"[b]Type:[/b]      {cat['type']}\n"
+            f"[b]Parent:[/b]    {parent}\n"
         )
 
     def action_go_back(self):
@@ -192,10 +203,10 @@ class CategoryListScreen(Screen):
         if cat_id is None:
             self.app.push_screen(MessageBox("No category selected.", "Info"))
             return
-        
+
         def on_save():
             self.load_data()
-        
+
         self.app.push_screen(CategoryEditScreen(cat_id, on_save=on_save))
 
     def action_delete_selected(self):
@@ -214,12 +225,22 @@ class CategoryListScreen(Screen):
             else:
                 self.load_data()
 
-        self.app.push_screen(ConfirmBox("Delete selected category?", "Confirm"), on_confirm)
+        self.app.push_screen(ConfirmBox("Delete selected category? Children will be moved to its parent.", "Confirm"), on_confirm)
+
+
+def _get_parent_options(app):
+    """Get flat list of categories for parent dropdown."""
+    resp = api_get("/categories", username=app.user.get("username"))
+    data, err = handle_response(resp)
+    if err:
+        return []
+    items = extract_items(data)
+    return [(f"{c.get('name')} ({c.get('type')})", str(c.get("id"))) for c in items]
 
 
 class CategoryAddScreen(Screen):
-    """Add new category screen."""
-    
+    """Add new category screen with optional parent."""
+
     BINDINGS = [Binding("escape", "go_back", "Back")]
 
     def compose(self) -> ComposeResult:
@@ -236,10 +257,16 @@ class CategoryAddScreen(Screen):
                 prompt="Select type",
                 id="cat_type",
             )
+            yield Label("Parent (optional):")
+            yield Select(
+                [("No Parent", "none")] + _get_parent_options(self.app),
+                prompt="Select parent",
+                id="cat_parent",
+            )
             yield Static("")
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", variant="default", id="cancel")
+                yield Button("💾 Save", variant="primary", id="save")
+                yield Button("✖ Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")
@@ -258,17 +285,25 @@ class CategoryAddScreen(Screen):
     def save(self):
         name = self.query_one("#cat_name", Input).value.strip()
         cat_type = self.query_one("#cat_type", Select).value
-        
+        parent_val = self.query_one("#cat_parent", Select).value
+
         if not name:
             self.app.push_screen(MessageBox("Name is required", "Validation"))
             return
         if cat_type is None or cat_type == Select.BLANK:
             self.app.push_screen(MessageBox("Type is required", "Validation"))
             return
-        
-        resp = api_post("/categories", {"name": name, "type": str(cat_type)}, username=self.app.user.get("username"))
+
+        payload = {"name": name, "type": str(cat_type)}
+        if parent_val and parent_val != "none":
+            try:
+                payload["parent_id"] = int(parent_val)
+            except (TypeError, ValueError):
+                pass
+
+        resp = api_post("/categories", payload, username=self.app.user.get("username"))
         _, err = handle_response(resp)
-        
+
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
         else:
@@ -278,8 +313,8 @@ class CategoryAddScreen(Screen):
 
 
 class CategoryEditScreen(Screen):
-    """Edit category screen."""
-    
+    """Edit category screen with optional parent."""
+
     BINDINGS = [Binding("escape", "go_back", "Back")]
 
     def __init__(self, cat_id: int, on_save=None, **kwargs):
@@ -301,10 +336,16 @@ class CategoryEditScreen(Screen):
                 prompt="Select type",
                 id="cat_type",
             )
+            yield Label("Parent (optional):")
+            yield Select(
+                [("No Parent", "none")] + _get_parent_options(self.app),
+                prompt="Select parent",
+                id="cat_parent",
+            )
             yield Static("")
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", variant="default", id="cancel")
+                yield Button("💾 Save", variant="primary", id="save")
+                yield Button("✖ Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")
@@ -319,6 +360,11 @@ class CategoryEditScreen(Screen):
             return
         self.query_one("#cat_name", Input).value = data.get("name", "")
         self.query_one("#cat_type", Select).value = data.get("type", "")
+        parent_id = data.get("parent_id")
+        if parent_id:
+            self.query_one("#cat_parent", Select).value = str(parent_id)
+        else:
+            self.query_one("#cat_parent", Select).value = "none"
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
@@ -332,21 +378,29 @@ class CategoryEditScreen(Screen):
     def save(self):
         name = self.query_one("#cat_name", Input).value.strip()
         cat_type = self.query_one("#cat_type", Select).value
-        
+        parent_val = self.query_one("#cat_parent", Select).value
+
         if not name:
             self.app.push_screen(MessageBox("Name is required", "Validation"))
             return
         if cat_type is None or cat_type == Select.BLANK:
             self.app.push_screen(MessageBox("Type is required", "Validation"))
             return
-        
+
+        payload = {"name": name, "type": str(cat_type)}
+        if parent_val and parent_val != "none":
+            try:
+                payload["parent_id"] = int(parent_val)
+            except (TypeError, ValueError):
+                pass
+
         resp = api_put(
             f"/categories/{self.cat_id}",
-            {"name": name, "type": str(cat_type)},
+            payload,
             username=self.app.user.get("username")
         )
         _, err = handle_response(resp)
-        
+
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
         else:

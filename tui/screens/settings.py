@@ -55,7 +55,7 @@ class SettingsScreen(Screen):
 
         self.app.push_screen(
             ConfirmBox(
-                "This will permanently delete ALL your categories, sources, and transactions.\n"
+                "This will permanently delete ALL your categories, wallets, and transactions.\n"
                 "This action cannot be undone.",
                 "Reset All Data?",
             ),

@@ -8,7 +8,8 @@ from textual.widgets import (
     Button, DataTable, Footer, Header, Input, Label, Rule, Select, Static,
 )
 
-from tui.api import api_get, api_post, api_put, api_delete, handle_response
+
+from tui.api import api_get, api_post, api_put, api_delete, extract_items, handle_response
 from tui.widgets import ConfirmBox, HelpTip, MessageBox, StatusBar
 
 
@@ -92,7 +93,7 @@ class UserManagementScreen(Screen):
             self.app.push_screen(MessageBox(err, "Error"))
             return
 
-        self._data = data or []
+        self._data = extract_items(data)
         for item in self._data:
             status = self._format_status(item)
             role = "Admin" if item.get("is_admin") else "User"
@@ -396,8 +397,8 @@ class UserAddScreen(Screen):
                 )
             yield Static("")
             with Horizontal(classes="button_row"):
-                yield Button("Create", variant="primary", id="create_btn")
-                yield Button("Cancel", variant="default", id="cancel_btn")
+                yield Button("➕ Create", variant="primary", id="create_btn")
+                yield Button("✖ Cancel", variant="default", id="cancel_btn")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Create  [Esc] Cancel", id="help")
             yield StatusBar("Fill fields  Enter=Create  Esc=Back", id="status")
@@ -510,8 +511,8 @@ class UserEditScreen(Screen):
                 )
             yield Static("")
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save_btn")
-                yield Button("Cancel", variant="default", id="cancel_btn")
+                yield Button("💾 Save", variant="primary", id="save_btn")
+                yield Button("✖ Cancel", variant="default", id="cancel_btn")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Edit fields  Enter=Save  Esc=Back", id="status")

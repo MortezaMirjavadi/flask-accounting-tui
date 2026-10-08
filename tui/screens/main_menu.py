@@ -103,10 +103,10 @@ def create_accounting_menu() -> MenuItem:
                     MenuItem(id="categories-all", label="All Categories", icon="📋", content="categories"),
                     MenuItem(id="categories-add", label="Add Category", icon="➕", content="categories_add"),
                 ]),
-            MenuItem(id="sources", label="Sources", icon="💰", description="Manage sources",
+            MenuItem(id="wallets", label="Wallets", icon="💰", description="Manage wallets",
                 children=[
-                    MenuItem(id="sources-all", label="All Sources", icon="📋", content="sources"),
-                    MenuItem(id="sources-add", label="Add Source", icon="➕", content="sources_add"),
+                    MenuItem(id="wallets-all", label="All Wallets", icon="📋", content="wallets"),
+                    MenuItem(id="wallets-add", label="Add Wallet", icon="➕", content="wallets_add"),
                 ]),
             MenuItem(id="transactions", label="Transactions", icon="💳", description="Manage transactions",
                 children=[
@@ -537,17 +537,17 @@ class SidebarAppScreen(Screen):
                     yield SearchTree(self.menu_root, id="menu-tree")
                 
                 with Horizontal(id="quick-actions"):
-                    yield Button("Expand All", id="btn-expand", variant="primary")
-                    yield Button("Collapse", id="btn-collapse", variant="default")
+                    yield Button("⬇ Expand All", id="btn-expand", variant="primary")
+                    yield Button("⬆ Collapse", id="btn-collapse", variant="default")
 
             # Content Area
             with Vertical(id="content-area"):
                 with Horizontal(id="content-header"):
                     yield Breadcrumb(id="breadcrumb")
                     with Horizontal(id="content-actions"):
-                        yield Button("Open", id="btn-open", variant="primary")
+                        yield Button("📂 Open", id="btn-open", variant="primary")
                         yield Button("🔄 Refresh", id="btn-refresh")
-                        yield Button("Toggle", id="btn-toggle-sidebar", variant="default")
+                        yield Button("↔ Toggle", id="btn-toggle-sidebar", variant="default")
 
                 with Container(id="content-body"):
                     yield ContentRenderer(id="content-renderer")
@@ -676,8 +676,8 @@ class SidebarAppScreen(Screen):
             "dashboard": ("tui.screens.base", "DashboardScreen"),
             "categories": ("tui.screens.categories", "CategoriesScreen"),
             "categories_add": ("tui.screens.categories", "CategoryFormScreen"),
-            "sources": ("tui.screens.sources", "SourcesScreen"),
-            "sources_add": ("tui.screens.sources", "SourceFormScreen"),
+            "wallets": ("tui.screens.wallets", "WalletsScreen"),
+            "wallets_add": ("tui.screens.wallets", "WalletAddScreen"),
             "transactions": ("tui.screens.transactions", "TransactionsScreen"),
             "transactions_add": ("tui.screens.transactions", "TransactionFormScreen"),
             "reports": ("tui.screens.reports", "ReportsScreen"),

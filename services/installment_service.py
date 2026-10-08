@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from calendar import monthrange
 from datetime import date, timedelta
 from decimal import Decimal
@@ -14,7 +15,7 @@ from services.commitment_utils import (
     coerce_string,
     create_settlement_transaction,
     ensure_category_exists,
-    ensure_source_exists,
+    ensure_wallet_exists,
     quantize_amount,
     safe_int,
     to_int,
@@ -93,13 +94,13 @@ class InstallmentService:
             raise ValueError("due_day_of_month must be between 1 and 31")
 
         category_id = to_int(payload.get("category_id"), "category_id")
-        source_id = safe_int(payload.get("source_id"), "source_id")
+        wallet_id = safe_int(payload.get("wallet_id"), "wallet_id")
 
         conn = get_connection()
         cursor = conn.cursor()
         try:
             ensure_category_exists(cursor, category_id, user_id)
-            ensure_source_exists(cursor, source_id, user_id)
+            ensure_wallet_exists(cursor, wallet_id, user_id)
 
             installment_amounts = _build_installment_amounts(total_amount, installment_count, amount_field)
 
@@ -111,7 +112,7 @@ class InstallmentService:
                 """
                 INSERT INTO installment_plans (
                     user_id, title, total_amount, installment_count, installment_amount, start_date,
-                    due_day_of_month, category_id, source_id, status
+                    due_day_of_month, category_id, wallet_id, status
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
@@ -124,7 +125,7 @@ class InstallmentService:
                     to_iso_date(start_date),
                     due_day_of_month,
                     category_id,
-                    source_id,
+                    wallet_id,
                     status,
                 ),
             )
@@ -223,35 +224,48 @@ class InstallmentService:
                 release_connection(connection)
 
     @staticmethod
-    def list_installment_plans(user_id: int, status: str | None = None) -> list[dict]:
+    def list_installment_plans(user_id: int, status: str | None = None, wallet_id: int | None = None, page: int = 1, per_page: int = 20) -> dict:
         conn = get_connection()
         cursor = conn.cursor()
         try:
-            query = """
-                SELECT p.id,
-                    p.title,
-                    p.total_amount,
-                    p.installment_count,
-                    p.installment_amount,
-                    p.start_date,
-                    p.due_day_of_month,
-                    p.status,
-                    p.created_at,
-                    p.updated_at,
-                    c.name Category,
-                    s.name Source
-                FROM installment_plans p
-                        INNER JOIN categories c on c.id = p.category_id
-                        INNER JOIN sources s on s.id = p.source_id
-                WHERE p.user_id = %s AND p.deleted_at IS NULL
-            """
+            where_clause = " WHERE p.user_id = %s AND p.deleted_at IS NULL"
             params = [user_id]
+            if wallet_id:
+                where_clause += " AND p.wallet_id = %s"
+                params.append(wallet_id)
             if status:
-                query += " AND p.status = %s"
+                where_clause += " AND p.status = %s"
                 params.append(status)
-            query += " ORDER BY p.created_at DESC"
-            cursor.execute(query, params)
-            return [_row_to_dict(row) for row in cursor.fetchall()]
+
+            join_clause = (
+                " FROM installment_plans p"
+                " INNER JOIN categories c on c.id = p.category_id"
+                " LEFT JOIN wallets w on w.id = p.wallet_id"
+            )
+
+            count_sql = "SELECT COUNT(*) as total" + join_clause + where_clause
+            cursor.execute(count_sql, params)
+            total = cursor.fetchone()["total"]
+
+            data_sql = (
+                "SELECT p.id, p.title, p.total_amount, p.installment_count,"
+                " p.installment_amount, p.start_date, p.due_day_of_month,"
+                " p.status, p.created_at, p.updated_at,"
+                " c.name Category, w.name Wallet"
+                + join_clause + where_clause + " ORDER BY p.created_at DESC"
+            )
+            offset = (page - 1) * per_page
+            cursor.execute(data_sql + " LIMIT %s OFFSET %s", params + [per_page, offset])
+            rows = cursor.fetchall()
+
+            total_pages = math.ceil(total / per_page) if per_page > 0 else 0
+            return {
+                "items": [_row_to_dict(row) for row in rows],
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": total_pages,
+            }
         finally:
             cursor.close()
             release_connection(conn)
@@ -274,10 +288,10 @@ class InstallmentService:
                     p.created_at,
                     p.updated_at,
                     c.name Category,
-                    s.name Source
+                    w.name Wallet
                 FROM installment_plans p
                         INNER JOIN categories c on c.id = p.category_id
-                        INNER JOIN sources s on s.id = p.source_id
+                        LEFT JOIN wallets w on w.id = p.wallet_id
                 WHERE p.id = %s AND p.user_id = %s AND p.deleted_at IS NULL
                 """,
                 (plan_id, user_id),
@@ -399,7 +413,7 @@ class InstallmentService:
                         i.status,
                         i.paid_date,
                         p.category_id,
-                        p.source_id,
+                        p.wallet_id,
                         p.status AS plan_status
                     FROM installments i
                     JOIN installment_plans p ON p.id = i.plan_id
@@ -422,7 +436,7 @@ class InstallmentService:
                     tx_date=paid_date_value,
                     amount=amount,
                     category_id=row["category_id"],
-                    source_id=row["source_id"],
+                    wallet_id=row["wallet_id"],
                     description=f"Installment #{row['id']} paid",
                     reference_type="installment",
                     reference_id=installment_id,

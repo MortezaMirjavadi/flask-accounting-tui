@@ -12,7 +12,7 @@ from textual.widgets import (
     ListItem, ListView, Rule, Select, Static
 )
 
-from tui.api import api_get, api_post, api_put, api_delete, handle_response, format_toman
+from tui.api import api_get, api_post, api_put, api_delete, extract_items, handle_response, format_toman
 from tui.config import PERSIAN_MONTHS, get_persian_month_name
 from tui.widgets import ConfirmBox, HelpTip, MessageBox, StatusBar
 
@@ -219,7 +219,7 @@ class BudgetPeriodListScreen(Screen):
             status.update("No budget periods found. Press [A] to add one.")
             return
         
-        for period in data:
+        for period in extract_items(data):
             item_count = period.get("item_count", 0)
             month_name = get_persian_month_name(period["month"])
             table.add_row(
@@ -316,8 +316,8 @@ class BudgetPeriodAddScreen(Screen):
             yield Label("Month:")
             yield Select(PERSIAN_MONTHS, id="month_select", allow_blank=False)
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save_btn")
-                yield Button("Cancel", id="cancel_btn")
+                yield Button("💾 Save", variant="primary", id="save_btn")
+                yield Button("✖ Cancel", id="cancel_btn")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Fill in the fields and press Save", id="status")
@@ -386,8 +386,8 @@ class BudgetPeriodEditScreen(Screen):
             yield Label("Month:")
             yield Select(PERSIAN_MONTHS, id="month_select", allow_blank=False)
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save_btn")
-                yield Button("Cancel", id="cancel_btn")
+                yield Button("💾 Save", variant="primary", id="save_btn")
+                yield Button("✖ Cancel", id="cancel_btn")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Loading...", id="status")
@@ -499,7 +499,7 @@ class BudgetItemListScreen(Screen):
         if not data:
             status.update("No budget items found. Press [A] to add one.")
             return
-        for item in data:
+        for item in extract_items(data):
             table.add_row(
                 str(item["id"]),
                 item["category_name"],
@@ -574,8 +574,8 @@ class BudgetItemAddScreen(Screen):
             yield Label("Notes (optional):")
             yield Input(placeholder="Optional notes", id="notes_input")
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save_btn")
-                yield Button("Cancel", id="cancel_btn")
+                yield Button("💾 Save", variant="primary", id="save_btn")
+                yield Button("✖ Cancel", id="cancel_btn")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Loading categories...", id="status")
@@ -596,7 +596,7 @@ class BudgetItemAddScreen(Screen):
             status.update("No categories found. Please add categories first.")
             return
         cat_select = self.query_one("#category_select", Select)
-        options = [(cat["name"], cat["id"]) for cat in data]
+        options = [(cat["name"], cat["id"]) for cat in extract_items(data)]
         cat_select.set_options(options)
         status.update("Fill in the fields and press Save")
 
@@ -668,8 +668,8 @@ class BudgetItemEditScreen(Screen):
             yield Label("Notes (optional):")
             yield Input(placeholder="Optional notes", id="notes_input")
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save_btn")
-                yield Button("Cancel", id="cancel_btn")
+                yield Button("💾 Save", variant="primary", id="save_btn")
+                yield Button("✖ Cancel", id="cancel_btn")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Loading...", id="status")
@@ -690,7 +690,7 @@ class BudgetItemEditScreen(Screen):
             status.update("No categories found.")
             return
         cat_select = self.query_one("#category_select", Select)
-        options = [(cat["name"], cat["id"]) for cat in data]
+        options = [(cat["name"], cat["id"]) for cat in extract_items(data)]
         cat_select.set_options(options)
         self.load_item()
 
@@ -771,7 +771,7 @@ class BudgetReportScreen(Screen):
                 yield Input(placeholder="1403", id="year_input", classes="filter_input")
                 yield Label("Month:")
                 yield Select(PERSIAN_MONTHS, id="month_select", allow_blank=False)
-                yield Button("Load Report", variant="primary", id="load_btn")
+                yield Button("📊 Load Report", variant="primary", id="load_btn")
             yield DataTable(id="report_table")
             yield Static("", id="summary_text")
         with Vertical(classes="bottom_bar"):

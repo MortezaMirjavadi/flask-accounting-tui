@@ -9,11 +9,11 @@ from tui.screens.categories import (
     CategoryAddScreen,
     CategoryEditScreen,
 )
-from tui.screens.sources import (
-    SourcesScreen,
-    SourceListScreen,
-    SourceAddScreen,
-    SourceEditScreen,
+from tui.screens.wallets import (
+    WalletsScreen,
+    WalletListScreen,
+    WalletAddScreen,
+    WalletEditScreen,
 )
 from tui.screens.transactions import (
     TransactionsScreen,
@@ -57,11 +57,11 @@ __all__ = [
     "CategoryListScreen",
     "CategoryAddScreen",
     "CategoryEditScreen",
-    # Sources
-    "SourcesScreen",
-    "SourceListScreen",
-    "SourceAddScreen",
-    "SourceEditScreen",
+    # Wallets
+    "WalletsScreen",
+    "WalletListScreen",
+    "WalletAddScreen",
+    "WalletEditScreen",
     # Transactions
     "TransactionsScreen",
     "TransactionListScreen",

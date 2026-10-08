@@ -58,17 +58,17 @@ class EventFormScreen(ModalScreen[dict | None]):
         ("escape", "cancel", "Cancel"),
     ]
 
-    def __init__(self, user_id: int, categories: list, sources: list, payload: dict = None, **kwargs):
+    def __init__(self, user_id: int, categories: list, wallets: list, payload: dict = None, **kwargs):
         super().__init__(**kwargs)
         self.user_id = user_id
         self.categories = categories
-        self.sources = sources
+        self.wallets = wallets
         self.payload = payload or {}
 
     def compose(self) -> ComposeResult:
         defaults = {
             "title": "", "description": "", "amount": "", "category_id": "",
-            "source_id": "", "frequency": "once", "repeat_interval": "1",
+            "wallet_id": "", "frequency": "once", "repeat_interval": "1",
             "start_date": date.today().strftime("%Y-%m-%d"),
             "end_date": "", "occurrence_limit": ""
         }
@@ -76,7 +76,7 @@ class EventFormScreen(ModalScreen[dict | None]):
         defaults["start_date"] = _normalize_picker_date(defaults.get("start_date"))
 
         cat_options = [(f"{name} ({cat_type})", str(cat_id)) for cat_id, name, cat_type in self.categories]
-        src_options = [(name, str(src_id)) for src_id, name in self.sources]
+        src_options = [(name, str(src_id)) for src_id, name in self.wallets]
         has_categories = bool(cat_options)
         if not has_categories:
             cat_options = [("No categories", "")]
@@ -96,7 +96,7 @@ class EventFormScreen(ModalScreen[dict | None]):
                     id="category_select",
                 )
                 if src_options:
-                    yield Select(options=src_options, prompt="Select Source", allow_blank=True, id="source_select")
+                    yield Select(options=src_options, prompt="Select Wallet", allow_blank=True, id="wallet_select")
                 yield JalaliDatePicker(initial_gregorian=defaults["start_date"], id="start_date_picker")
                 with Horizontal(classes="button_row"):
                     yield Button("Save", variant="primary", id="save")
@@ -111,15 +111,15 @@ class EventFormScreen(ModalScreen[dict | None]):
 
         cat_select = self.query_one("#category_select", Select)
         category_id = cat_select.value if cat_select.value is not Select.NULL else ""
-        src_select = self.query_one("#source_select", Select) if self.sources else None
-        source_id = src_select.value if src_select and src_select.value not in (None, "", Select.NULL) else None
+        src_select = self.query_one("#wallet_select", Select) if self.wallets else None
+        wallet_id = src_select.value if src_select and src_select.value not in (None, "", Select.NULL) else None
         date_picker = self.query_one("#start_date_picker", JalaliDatePicker)
         gregorian_start = date_picker.get_gregorian_date()
         payload = {
             "title": self.query_one("#title", Input).value,
             "amount": self.query_one("#amount", Input).value,
             "category_id": category_id,
-            "source_id": source_id,
+            "wallet_id": wallet_id,
             "start_date": gregorian_start,
         }
         if payload["amount"] and payload["category_id"]:
@@ -147,7 +147,7 @@ class CalendarScreen(Screen):
         self.user_id = user_id
         self.instances = []
         self._categories = []
-        self._sources = []
+        self._wallets = []
 
     def compose(self) -> ComposeResult:
         if not getattr(self, "_sidebar_embedded", False):
@@ -174,8 +174,8 @@ class CalendarScreen(Screen):
         try:
             c.execute("SELECT id, name, type FROM categories WHERE user_id = %s AND deleted_at IS NULL", (self.user_id,))
             self._categories = [(r["id"], r["name"], r["type"]) for r in c.fetchall()]
-            c.execute("SELECT id, name FROM sources WHERE user_id = %s AND deleted_at IS NULL", (self.user_id,))
-            self._sources = [(r["id"], r["name"]) for r in c.fetchall()]
+            c.execute("SELECT id, name FROM wallets WHERE user_id = %s AND deleted_at IS NULL", (self.user_id,))
+            self._wallets = [(r["id"], r["name"]) for r in c.fetchall()]
         finally:
             c.close()
         release_connection(conn)
@@ -271,7 +271,7 @@ class CalendarScreen(Screen):
                     self.refresh_data()
                 except Exception as exc:
                     self.app.push_screen(MessageBox(str(exc), "Error", is_error=True))
-        self.app.push_screen(EventFormScreen(self.user_id, self._categories, self._sources), on_save)
+        self.app.push_screen(EventFormScreen(self.user_id, self._categories, self._wallets), on_save)
 
     def action_edit(self):
         pass

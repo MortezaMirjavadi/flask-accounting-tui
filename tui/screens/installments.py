@@ -9,7 +9,7 @@ from textual.widgets import (
     ListItem, ListView, Select, Static, Rule, TextArea
 )
 
-from tui.api import api_get, api_post, api_put, api_delete, handle_response, format_toman
+from tui.api import api_get, api_post, api_put, api_delete, extract_items, handle_response, format_toman
 from tui.widgets import ConfirmBox, HelpTip, MessageBox, StatusBar
 from app.utils.helpers import jalali_to_gregorian, gregorian_to_jalali, gregorian_to_jalali_with_timestamp
 
@@ -92,8 +92,8 @@ class InstallmentListScreen(Screen):
                     prompt="Status",
                     id="inst_filter_status",
                 )
-                yield Button("Filter", variant="primary", id="inst_filter_btn")
-                yield Button("Reset", variant="default", id="inst_reset_btn")
+                yield Button("🔍 Filter", variant="primary", id="inst_filter_btn")
+                yield Button("🔄 Reset", variant="default", id="inst_reset_btn")
             with Horizontal(classes="split_row"):
                 with Vertical(classes="left_pane"):
                     yield DataTable(id="inst_table")
@@ -125,7 +125,7 @@ class InstallmentListScreen(Screen):
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
-        self._data = data or []
+        self._data = extract_items(data)
         if not self._data:
             table.add_row("-", "No plans", "-", "-", "-", "-")
         else:
@@ -190,7 +190,7 @@ class InstallmentListScreen(Screen):
             f"[b]Due Day:[/b]           {plan.get('due_day_of_month', '')}\n"
             f"[b]Status:[/b]            {plan.get('status', '')}\n"
             f"[b]Category:[/b]       {plan.get('category', '')}\n"
-            f"[b]Source:[/b]         {plan.get('source') or '-'}\n"
+            f"[b]Wallet:[/b]        {plan.get('wallet') or '-'}\n"
         )
 
     def action_go_back(self):
@@ -327,8 +327,8 @@ class InstallmentAddScreen(Screen):
                         yield Input(placeholder="1-31", id="inst_due_day")
                 yield Label("Category:")
                 yield Select([], prompt="Loading...", id="inst_category")
-                yield Label("Source (optional):")
-                yield Select([], prompt="Loading...", id="inst_source")
+                yield Label("Wallet (optional):")
+                yield Select([], prompt="Loading...", id="inst_wallet")
                 yield Label("Status:")
                 yield Select(
                     [("Active", "active"), ("Completed", "completed"), ("Canceled", "canceled")],
@@ -338,8 +338,8 @@ class InstallmentAddScreen(Screen):
                 yield Label("Description (optional):")
                 yield TextArea(id="inst_desc")
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", variant="default", id="cancel")
+                yield Button("💾 Save", variant="primary", id="save")
+                yield Button("✖ Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")
@@ -348,7 +348,7 @@ class InstallmentAddScreen(Screen):
 
     def on_mount(self) -> None:
         self._load_categories()
-        self._load_sources()
+        self._load_wallets()
         self.query_one("#inst_status", Select).value = "active"
 
     def _load_categories(self):
@@ -359,21 +359,21 @@ class InstallmentAddScreen(Screen):
             select.set_options([])
             select.prompt = "No categories"
         else:
-            options = [(f"{c['name']} ({c['type']})", c["id"]) for c in data]
+            options = [(f"{c['name']} ({c['type']})", c["id"]) for c in extract_items(data)]
             select.set_options(options)
             select.prompt = "Select category"
 
-    def _load_sources(self):
-        resp = api_get("/sources", username=self.app.user.get("username"))
+    def _load_wallets(self):
+        resp = api_get("/wallets", username=self.app.user.get("username"))
         data, err = handle_response(resp)
-        select = self.query_one("#inst_source", Select)
+        select = self.query_one("#inst_wallet", Select)
         if err or not data:
             select.set_options([])
-            select.prompt = "No sources"
+            select.prompt = "No wallets"
         else:
-            options = [(s["name"], s["id"]) for s in data]
+            options = [(s["name"], s["id"]) for s in extract_items(data)]
             select.set_options(options)
-            select.prompt = "Select source"
+            select.prompt = "Select wallet"
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
@@ -392,7 +392,7 @@ class InstallmentAddScreen(Screen):
         start_date = self.query_one("#inst_start_date", Input).value.strip()
         due_day_str = self.query_one("#inst_due_day", Input).value.strip()
         category_id = self.query_one("#inst_category", Select).value
-        source_id = self.query_one("#inst_source", Select).value
+        wallet_id = self.query_one("#inst_wallet", Select).value
         status = self.query_one("#inst_status", Select).value
         desc = self.query_one("#inst_desc", TextArea).text.strip() or None
 
@@ -444,7 +444,7 @@ class InstallmentAddScreen(Screen):
             "start_date": start_gregorian,
             "due_day_of_month": due_day,
             "category_id": category_id,
-            "source_id": source_id if source_id is not None and source_id != Select.BLANK else None,
+            "wallet_id": wallet_id if wallet_id is not None and wallet_id != Select.BLANK else None,
             "status": str(status),
             "description": desc,
         }
@@ -468,7 +468,7 @@ class InstallmentAddScreen(Screen):
             self.query_one("#inst_start_date", Input).value = ""
             self.query_one("#inst_due_day", Input).value = ""
             self.query_one("#inst_category", Select).clear()
-            self.query_one("#inst_source", Select).clear()
+            self.query_one("#inst_wallet", Select).clear()
             self.query_one("#inst_status", Select).value = "active"
             self.query_one("#inst_desc", TextArea).load_text("")
 
@@ -504,15 +504,15 @@ class InstallmentEditScreen(Screen):
                 yield Input(placeholder="1-31", id="inst_due_day")
                 yield Label("Category:")
                 yield Input(id="inst_category", disabled=True)
-                yield Label("Source:")
-                yield Input(id="inst_source", disabled=True)
+                yield Label("Wallet:")
+                yield Input(id="inst_wallet", disabled=True)
                 yield Label("Status:")
                 yield Input(id="inst_status", disabled=True)
                 yield Label("Description (optional):")
                 yield TextArea(id="inst_desc")
             with Horizontal(classes="button_row"):
-                yield Button("Save", variant="primary", id="save")
-                yield Button("Cancel", variant="default", id="cancel")
+                yield Button("💾 Save", variant="primary", id="save")
+                yield Button("✖ Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Save  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Save  Esc=Cancel", id="status")
@@ -525,7 +525,7 @@ class InstallmentEditScreen(Screen):
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
-        self._data = data
+        self._data = extract_items(data)
         start_jalali = gregorian_to_jalali(data.get("start_date", "")) if data.get("start_date") else ""
         self.query_one("#inst_title", Input).value = data.get("title", "")
         self.query_one("#inst_total", Input).value = str(data.get("total_amount", ""))
@@ -534,7 +534,7 @@ class InstallmentEditScreen(Screen):
         self.query_one("#inst_start_date", Input).value = start_jalali
         self.query_one("#inst_due_day", Input).value = str(data.get("due_day_of_month", ""))
         self.query_one("#inst_category", Input).value = str(data.get("category", ""))
-        self.query_one("#inst_source", Input).value = str(data.get("source") or "")
+        self.query_one("#inst_wallet", Input).value = str(data.get("wallet") or "")
         self.query_one("#inst_status", Input).value = data.get("status", "")
         self.query_one("#inst_desc", TextArea).load_text(data.get("description") or "")
 
@@ -615,7 +615,7 @@ class InstallmentDetailScreen(Screen):
         if err:
             self.app.push_screen(MessageBox(err, "Error"))
             return
-        self._data = data
+        self._data = extract_items(data)
         plan = data or {}
         info.update(
             f"[b]Title:[/b] {plan.get('title', '')}  |  "
@@ -687,8 +687,8 @@ class InstallmentPayScreen(Screen):
                 yield Label("Paid Date (Jalali, optional):")
                 yield Input(placeholder="1405-01-01", id="pay_date")
             with Horizontal(classes="button_row"):
-                yield Button("Pay", variant="primary", id="save")
-                yield Button("Cancel", variant="default", id="cancel")
+                yield Button("💰 Pay", variant="primary", id="save")
+                yield Button("✖ Cancel", variant="default", id="cancel")
         with Vertical(classes="bottom_bar"):
             yield HelpTip("[Tab] Next field  [Enter] Pay  [Esc] Cancel", id="help")
             yield StatusBar("Enter=Pay  Esc=Cancel", id="status")
